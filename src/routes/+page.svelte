@@ -5,14 +5,31 @@
     termToString,
     whenToString,
     type Course,
+    type Slot,
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
   import { assert } from "$lib/util";
   // import testExcelFile from "../kdb_20251010212030.xlsx?base64";
   import testExcelFile from "../test.xlsx?base64";
+  import SlotSelector from "./SlotSelector.svelte";
   import * as exceljs from "exceljs";
+  import { SvelteMap } from "svelte/reactivity";
+
+  function createSyllabusUrl(year: string, courseId: string): string {
+    return `https://kdb.tsukuba.ac.jp/syllabi/${year}/${courseId}/jpn`;
+  }
+
+  function getAcademicYear(d: Date): number {
+    if (d.getMonth() <= 2) {
+      return d.getFullYear() - 1;
+    } else {
+      return d.getFullYear();
+    }
+  }
 
   let courses = $state.raw<Course[] | undefined>();
+  let courseIndexToSlots = $state(new SvelteMap<number, Slot[]>());
+  let year = $state(getAcademicYear(new Date()));
   let onlyShowFailed = $state(false);
 
   let visibleCourses = $derived.by(() => {
@@ -48,6 +65,7 @@
     const cs = parseCourses(w.worksheets[0]);
     assert(cs !== undefined);
     courses = cs;
+    courseIndexToSlots.clear();
   }
 
   if (browser) {
@@ -63,13 +81,18 @@
 </header>
 
 <label>
+  年度
+  <input type="number" bind:value={year} />
+</label>
+<br />
+<label>
   <input type="checkbox" bind:checked={onlyShowFailed} />
   パースに失敗した授業のみ表示
 </label>
 <br />
 <br />
 
-<table>
+<table class="courses">
   <thead>
     <tr>
       <th>科目番号</th>
@@ -82,10 +105,10 @@
     </tr>
   </thead>
   <tbody>
-    {#each visibleCourses as c (c.id)}
+    {#each visibleCourses as c, i (c.id)}
       <tr class="raw">
         <td><pre>{c.id}</pre></td>
-        <td><pre>{c.name}</pre></td>
+        <td></td>
         <td><pre>{c.credit}</pre></td>
         <td><pre>{c.expects}</pre></td>
         <td><pre>{c.term}</pre></td>
@@ -100,7 +123,7 @@
             <div class="cross">❌</div>
           {/if}
         </td>
-        <td>{c.name}</td>
+        <td><a href={createSyllabusUrl(year.toString(), c.id)}>{c.name}</a></td>
         <td>
           {#if c.parsedCredit !== undefined}
             {c.parsedCredit}
@@ -157,7 +180,30 @@
               {/each}
             </ul>
           {:else}
-            TODO
+            {@const slots = courseIndexToSlots.get(i)}
+            {#if slots !== undefined && slots.length > 0}
+              <ul class="slot">
+                {#each slots as s, j}
+                  <li>
+                    {slotToString(s)}
+                    <button onclick={() => slots.splice(j, 1)}>⨯</button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+            <div class="slot-selector">
+              <SlotSelector
+                handleSlotAdd={(s) => {
+                  let slots = courseIndexToSlots.get(i);
+                  if (slots === undefined) {
+                    const s = $state([]);
+                    slots = s;
+                  }
+                  slots.push(s);
+                  courseIndexToSlots.set(i, slots);
+                }}
+              />
+            </div>
           {/if}
         </td>
       </tr>
@@ -194,6 +240,9 @@
   th,
   td {
     padding: 10px;
+  }
+  table.courses {
+    width: 100%;
   }
 
   tr.raw > td {
@@ -274,5 +323,9 @@
   .cross {
     width: fit-content;
     margin: auto;
+  }
+
+  * + .slot-selector {
+    margin-top: 10px;
   }
 </style>
