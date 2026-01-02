@@ -188,18 +188,21 @@ function parseTermSet(s: string): Term[] | undefined {
   };
 
   const terms: Term[] = [];
-  let i = 0;
-  while (i < tokens.length) {
-    const result = parseTerm(i);
-    if (result === undefined) {
-      return undefined;
-    }
-    const [newI, newTerms] = result;
-    i = newI;
-    for (const t of newTerms) {
-      terms.push(t);
+  {
+    let i = 0;
+    while (i < tokens.length) {
+      const result = parseTerm(i);
+      if (result === undefined) {
+        return undefined;
+      }
+      const [newI, newTerms] = result;
+      i = newI;
+      for (const t of newTerms) {
+        terms.push(t);
+      }
     }
   }
+
   return terms;
 }
 
@@ -295,9 +298,9 @@ function parseWhenSet(s: string): When[] | undefined {
     }
   }
 
-  let i = 0;
-
-  const parsePeriodRange = (): [number, number] | undefined => {
+  const parsePeriodRange = (
+    i: number,
+  ): [number, [number, number]] | undefined => {
     if (i + 2 >= tokens.length) {
       return undefined;
     }
@@ -310,12 +313,11 @@ function parseWhenSet(s: string): When[] | undefined {
       typeof to === "number" &&
       from < to
     ) {
-      i += 3;
-      return [from, to];
+      return [i + 3, [from, to]];
     }
   };
 
-  const parsePeriods = (): number[] | undefined => {
+  const parsePeriods = (i: number): [number, number[]] | undefined => {
     if (i >= tokens.length) {
       return undefined;
     }
@@ -334,10 +336,10 @@ function parseWhenSet(s: string): When[] | undefined {
       periods.push(next);
       i += 2;
     }
-    return periods;
+    return [i, periods];
   };
 
-  const parseDows = (): Dow[] | undefined => {
+  const parseDows = (i: number): [number, Dow[]] | undefined => {
     if (i >= tokens.length) {
       return undefined;
     }
@@ -356,15 +358,12 @@ function parseWhenSet(s: string): When[] | undefined {
       dows.push(next);
       i += 2;
     }
-    return dows;
+    return [i, dows];
   };
 
-  const parseNonRegularWhenKind = ():
-    | "intensive"
-    | "zuiji"
-    | "oudan"
-    | "nt"
-    | undefined => {
+  const parseNonRegularWhenKind = (
+    i: number,
+  ): [number, "intensive" | "zuiji" | "oudan" | "nt"] | undefined => {
     if (i >= tokens.length) {
       return undefined;
     }
@@ -372,37 +371,42 @@ function parseWhenSet(s: string): When[] | undefined {
     if (t !== "intensive" && t !== "zuiji" && t !== "oudan" && t !== "nt") {
       return undefined;
     }
-    i++;
-    return t;
+    return [i + 1, t];
   };
 
-  const parseWhenSet = (): When[] | undefined => {
+  const parseWhenSet = (i: number): [number, When[]] | undefined => {
     if (i >= tokens.length) {
       return undefined;
     }
-    const lastI = i;
-    const kind = parseNonRegularWhenKind();
-    if (kind !== undefined) {
-      return [{ kind }];
+    const maybeKind = parseNonRegularWhenKind(i);
+    if (maybeKind !== undefined) {
+      const [i, kind] = maybeKind;
+      return [i, [{ kind }]];
     }
-    const dows = parseDows();
-    if (dows === undefined) {
-      i = lastI;
+    const maybeDow = parseDows(i);
+    if (maybeDow === undefined) {
       return undefined;
     }
+    const [newI, dows] = maybeDow;
+    i = newI;
     let periods: number[] | undefined;
-    const range = parsePeriodRange();
-    if (range !== undefined) {
-      const [from, to] = range;
+    const maybeRange = parsePeriodRange(i);
+    if (maybeRange !== undefined) {
+      const [newI, [from, to]] = maybeRange;
+      i = newI;
       periods = [];
-      for (let i = from; i <= to; i++) {
-        periods.push(i);
+      for (let j = from; j <= to; j++) {
+        periods.push(j);
       }
     } else {
-      periods = parsePeriods();
+      const maybePeriods = parsePeriods(i);
+      if (maybePeriods !== undefined) {
+        const [newI, ps] = maybePeriods;
+        i = newI;
+        periods = ps;
+      }
     }
     if (periods === undefined) {
-      i = lastI;
       return undefined;
     }
     const set: When[] = [];
@@ -411,29 +415,33 @@ function parseWhenSet(s: string): When[] | undefined {
         set.push({ kind: "regular", dow, period });
       }
     }
-    return set;
+    return [i, set];
   };
 
   const parse = (): When[] | undefined => {
-    const first = parseWhenSet();
-    if (first === undefined) {
+    let i = 0;
+    const maybeFirstSet = parseWhenSet(i);
+    if (maybeFirstSet === undefined) {
       return undefined;
     }
+    const [newI, first] = maybeFirstSet;
+    i = newI;
     const set: When[] = first;
-    while (true) {
-      if (!(i < tokens.length && tokens[i] === "comma")) {
-        break;
-      }
+    while (i < tokens.length && tokens[i] === "comma") {
       i++;
-      const next = parseWhenSet();
-      if (next === undefined) {
+      const maybeNextSet = parseWhenSet(i);
+      if (maybeNextSet === undefined) {
         break;
       }
+      const [newI, next] = maybeNextSet;
+      i = newI;
       for (const w of next) {
         set.push(w);
       }
     }
-    return set;
+    if (i === tokens.length) {
+      return set;
+    }
   };
 
   return parse();
