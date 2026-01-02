@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { browser } from "$app/environment";
+  // import { browser } from "$app/environment";
   import {
     slotToString,
     termToString,
@@ -9,8 +9,8 @@
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
   import { assert } from "$lib/util";
-  // import testExcelFile from "../kdb_20251010212030.xlsx?base64";
-  import testExcelFile from "../test.xlsx?base64";
+  // import testExcelFile from "../excel/kdb_20251010212030.xlsx?base64";
+  // import testExcelFile from "../excel/test.xlsx?base64";
   import SlotSelector from "./SlotSelector.svelte";
   import * as exceljs from "exceljs";
   import { SvelteMap } from "svelte/reactivity";
@@ -30,7 +30,7 @@
   let courses = $state.raw<Course[] | undefined>();
   let courseIndexToSlots = $state(new SvelteMap<number, Slot[]>());
   let year = $state(getAcademicYear(new Date()));
-  let onlyShowFailed = $state(false);
+  let onlyShowFailed = $state(true);
 
   let visibleCourses = $derived.by(() => {
     if (courses === undefined) {
@@ -53,24 +53,37 @@
     return cs;
   });
 
-  async function a() {
-    const bytesString = window.atob(testExcelFile);
-    const bytes = new Uint8Array(bytesString.length);
-    for (let i = 0; i < bytesString.length; i++) {
-      bytes[i] = bytesString[i].codePointAt(0) ?? 0;
-    }
-
+  async function loadFile(bytes: ArrayBuffer): Promise<void> {
     const w = new exceljs.Workbook();
-    await w.xlsx.load(bytes.buffer);
+    await w.xlsx.load(bytes);
     const cs = parseCourses(w.worksheets[0]);
-    assert(cs !== undefined);
+    if (cs === undefined) {
+      window.alert("ファイルの読み込みに失敗しました");
+    }
     courses = cs;
     courseIndexToSlots.clear();
   }
 
-  if (browser) {
-    a();
+  async function handleFileInput(input: HTMLInputElement): Promise<void> {
+    assert(input.files !== null);
+    if (input.files.length === 0) {
+      return;
+    }
+    const bytes = await input.files[0].bytes();
+    await loadFile(bytes.buffer);
   }
+
+  // async function loadTestFile() {
+  //   const bytesString = window.atob(testExcelFile);
+  //   const bytes = new Uint8Array(bytesString.length);
+  //   for (let i = 0; i < bytesString.length; i++) {
+  //     bytes[i] = bytesString[i].codePointAt(0) ?? 0;
+  //   }
+  // }
+  //
+  // if (browser) {
+  //   loadTestFile();
+  // }
 </script>
 
 <header>
@@ -81,13 +94,18 @@
 </header>
 
 <label>
-  年度
+  科目一覧：
+  <input type="file" oninput={(e) => handleFileInput(e.currentTarget)} />
+</label>
+<br />
+<label>
+  年度：
   <input type="number" bind:value={year} />
 </label>
 <br />
 <label>
   <input type="checkbox" bind:checked={onlyShowFailed} />
-  パースに失敗した授業のみ表示
+  パースに失敗した科目のみ表示
 </label>
 <br />
 <br />
@@ -123,7 +141,15 @@
             <div class="cross">❌</div>
           {/if}
         </td>
-        <td><a href={createSyllabusUrl(year.toString(), c.id)}>{c.name}</a></td>
+        <td>
+          <a
+            href={createSyllabusUrl(year.toString(), c.id)}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {c.name}
+          </a>
+        </td>
         <td>
           {#if c.parsedCredit !== undefined}
             {c.parsedCredit}
