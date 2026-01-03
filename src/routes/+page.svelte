@@ -28,7 +28,7 @@
   }
 
   let courses = $state.raw<Course[] | undefined>();
-  let courseIndexToSlots = $state(new SvelteMap<number, Slot[]>());
+  let courseIdToSlots = $state(new SvelteMap<string, Slot[]>());
   let year = $state(getAcademicYear(new Date()));
   let onlyShowFailed = $state(true);
 
@@ -61,7 +61,7 @@
       window.alert("ファイルの読み込みに失敗しました");
     }
     courses = cs;
-    courseIndexToSlots.clear();
+    courseIdToSlots.clear();
   }
 
   async function handleFileInput(input: HTMLInputElement): Promise<void> {
@@ -71,6 +71,43 @@
     }
     const bytes = await input.files[0].bytes();
     await loadFile(bytes.buffer);
+  }
+
+  function handleCopyOutput(): void {
+    if (courses === undefined) {
+      return;
+    }
+    let elements = "";
+    for (let i = 0; i < courses.length; i++) {
+      const course = courses[i];
+      if (
+        !(
+          course.parsedId !== undefined &&
+          course.parsedCredit !== undefined &&
+          course.parsedExpects !== undefined
+        )
+      ) {
+        window.alert("TODO");
+        return;
+      }
+      let slots: Slot[];
+      if (course.parsedSlots !== undefined) {
+        slots = course.parsedSlots;
+      } else {
+        slots = courseIdToSlots.get(course.id) ?? [];
+      }
+      elements +=
+        JSON.stringify({
+          id: course.parsedId,
+          name: course.name,
+          credit: course.parsedCredit,
+          slots,
+        }) + "\n";
+    }
+    const output = `import { KnownCourse } from "../akiko";
+export const knownCourses = [
+${elements}] as KnownCourse[];`;
+    window.navigator.clipboard.writeText(output);
   }
 
   // async function loadTestFile() {
@@ -108,6 +145,10 @@
   パースに失敗した科目のみ表示
 </label>
 <br />
+<button disabled={courses === undefined} onclick={handleCopyOutput}>
+  出力をコピー
+</button>
+<br />
 <br />
 
 <table class="courses">
@@ -123,7 +164,7 @@
     </tr>
   </thead>
   <tbody>
-    {#each visibleCourses as c, i (c.id)}
+    {#each visibleCourses as c (c.id)}
       <tr class="raw">
         <td><pre>{c.id}</pre></td>
         <td></td>
@@ -206,7 +247,7 @@
               {/each}
             </ul>
           {:else}
-            {@const slots = courseIndexToSlots.get(i)}
+            {@const slots = courseIdToSlots.get(c.id)}
             {#if slots !== undefined && slots.length > 0}
               <ul class="slot">
                 {#each slots as s, j}
@@ -220,13 +261,13 @@
             <div class="slot-selector">
               <SlotSelector
                 handleSlotAdd={(s) => {
-                  let slots = courseIndexToSlots.get(i);
+                  let slots = courseIdToSlots.get(c.id);
                   if (slots === undefined) {
                     const s = $state([]);
                     slots = s;
                   }
                   slots.push(s);
-                  courseIndexToSlots.set(i, slots);
+                  courseIdToSlots.set(c.id, slots);
                 }}
               />
             </div>
