@@ -2,6 +2,7 @@ import {
   createSlots,
   isCourseId,
   isExpectedYear,
+  type Acond,
   type Course,
   type Dow,
   type Term,
@@ -459,6 +460,98 @@ function parseWhenSets(s: string): When[][] | undefined {
   return sets;
 }
 
+function parseAcondLine(line: string): Acond | undefined {
+  const normalized = line.trim();
+
+  // Unavailable in specific year
+  let match = normalized.match(/^(\d{4})年度開講せず/);
+  if (match) {
+    return { kind: "unavailable-in", year: parseInt(match[1], 10) };
+  }
+
+  // Cancelled in specific year
+  match = normalized.match(/^(\d{4})年度(?:は)?開講中止/);
+  if (match) {
+    return { kind: "unavailable-in", year: parseInt(match[1], 10) };
+  }
+
+  // Cancelled specific date
+  if (normalized.includes("開講中止決定") || normalized.includes("開講中止")) {
+    match = normalized.match(/(\d{4})\/\d{1,2}\/\d{1,2}\s*開講中止/);
+    if (match) {
+      return { kind: "unavailable-in", year: parseInt(match[1], 10) };
+    }
+    match = normalized.match(/^(\d{4})年度開講中止決定/);
+    if (match) {
+      return { kind: "unavailable-in", year: parseInt(match[1], 10) };
+    }
+  }
+
+  // Closed after
+  match = normalized.match(/^(\d{4})年度をもって閉講/);
+  if (match) {
+    return { kind: "closed-after", year: parseInt(match[1], 10) };
+  }
+  match = normalized.match(/^(\d{4})年度閉講予定/);
+  if (match) {
+    // If it closes in Y, it means it's closed AFTER Y-1
+    return { kind: "closed-after", year: parseInt(match[1], 10) - 1 };
+  }
+
+  // Odd/Even years
+  if (normalized.includes("西暦奇数年度開講")) {
+    return { kind: "odd-year-only" };
+  }
+  if (normalized.includes("西暦偶数年度開講")) {
+    return { kind: "even-year-only" };
+  }
+
+  if (
+    normalized.includes("原則隔年開講") ||
+    normalized.includes("原則として隔年開講")
+  ) {
+    return { kind: "principally-biennial" };
+  }
+
+  if (
+    normalized.includes("隔年開講") ||
+    normalized.includes("と隔年開講") ||
+    normalized.includes("隔年で開講")
+  ) {
+    return { kind: "biennial" };
+  }
+
+  // Periodic
+  match = normalized.match(/^(\d{4})年度より(\d)年おき開講/);
+  if (match) {
+    return {
+      kind: "periodic",
+      startYear: parseInt(match[1], 10),
+      interval: parseInt(match[2], 10),
+    };
+  }
+
+  return undefined;
+}
+
+function parseAconds(remark: string): Acond[] | undefined {
+  if (!remark || remark.trim() === "") {
+    return [];
+  }
+
+  const lines = remark.split("\n");
+  let aconds: Acond[] = [];
+
+  for (const line of lines) {
+    const parsed = parseAcondLine(line);
+    if (parsed !== undefined) {
+      aconds.push(parsed);
+    }
+  }
+
+  return aconds;
+}
+
 export function parseCourses(worksheet: Worksheet): Course[] | undefined {
   const headers = [
     "科目番号",
@@ -467,6 +560,7 @@ export function parseCourses(worksheet: Worksheet): Course[] | undefined {
     "標準履修年次",
     "実施学期",
     "曜時限",
+    "備考",
   ];
   let headerRow: number | undefined;
   const headerCols: number[] = [];
@@ -495,7 +589,7 @@ export function parseCourses(worksheet: Worksheet): Course[] | undefined {
       }
       texts.push(cell.text.trim().replaceAll("\r\n", "\n"));
     }
-    const [id, name, credit, expects, term, when] = texts;
+    const [id, name, credit, expects, term, when, remark] = texts;
     const parsedId = isCourseId(id) ? id : undefined;
     const parsedCredit = parseCredit(credit);
     const parsedExpects = parseExpects(expects);
@@ -508,6 +602,7 @@ export function parseCourses(worksheet: Worksheet): Course[] | undefined {
       expects,
       term,
       when,
+      remark,
       parsedId,
       parsedCredit,
       parsedExpects,
@@ -517,6 +612,7 @@ export function parseCourses(worksheet: Worksheet): Course[] | undefined {
         parsedTermSets !== undefined && parsedWhenSets !== undefined
           ? createSlots(parsedTermSets, parsedWhenSets)
           : undefined,
+      parsedAconds: parseAconds(remark),
     });
   }
 

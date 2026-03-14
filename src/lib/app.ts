@@ -1,4 +1,4 @@
-import { unreachable } from "./util";
+import { exactlyOne, unreachable } from "./util";
 
 declare const nominalIdentifier: unique symbol;
 type Nominal<T, Identifier> = T & { [nominalIdentifier]: Identifier };
@@ -145,6 +145,85 @@ export function isExpectedYear(n: number): boolean {
   return Number.isInteger(n) && 1 <= n && n <= 6;
 }
 
+// Availability condition
+export type Acond =
+  | { kind: "unavailable-in"; year: number }
+  | { kind: "odd-year-only" }
+  | { kind: "even-year-only" }
+  | { kind: "principally-biennial" }
+  | { kind: "biennial" }
+  | { kind: "closed-after"; year: number }
+  | { kind: "periodic"; startYear: number; interval: number };
+
+export function acondsToString(aconds: Acond[]): string {
+  if (aconds.length === 0) {
+    return "毎年";
+  }
+
+  return aconds
+    .map((a) => {
+      switch (a.kind) {
+        case "unavailable-in":
+          return `${a.year}年度休講`;
+        case "odd-year-only":
+          return "奇数年";
+        case "even-year-only":
+          return "偶数年";
+        case "principally-biennial":
+          return "原則隔年";
+        case "biennial":
+          return "隔年";
+        case "closed-after":
+          return `${a.year}年度で閉講`;
+        case "periodic":
+          return `${a.startYear}年度より${a.interval}年おき`;
+        default:
+          unreachable(a);
+      }
+    })
+    .join(", ");
+}
+
+export function isAvailableIn(
+  aconds: Acond[],
+  year: number,
+): boolean | undefined {
+  const onlyOne = exactlyOne(aconds);
+  if (
+    onlyOne !== undefined &&
+    (onlyOne.kind === "principally-biennial" || onlyOne.kind === "biennial")
+  )
+    return undefined;
+
+  for (const a of aconds) {
+    switch (a.kind) {
+      case "unavailable-in":
+        if (year === a.year) return false;
+        break;
+      case "odd-year-only":
+        if (year % 2 === 0) return false;
+        break;
+      case "even-year-only":
+        if (year % 2 !== 0) return false;
+        break;
+      case "closed-after":
+        if (year > a.year) return false;
+        break;
+      case "periodic":
+        if (!(year >= a.startYear && (year - a.startYear) % a.interval === 0))
+          return false;
+        break;
+      case "principally-biennial":
+      case "biennial":
+        break;
+      default:
+        unreachable(a);
+    }
+  }
+
+  return true;
+}
+
 export type Course = {
   id: string;
   name: string;
@@ -152,10 +231,12 @@ export type Course = {
   expects: string;
   term: string;
   when: string;
+  remark: string;
   parsedId: CourseId | undefined;
   parsedCredit: number | undefined;
   parsedExpects: number[] | undefined;
   parsedTermSets: Term[][] | undefined;
   parsedWhenSets: When[][] | undefined;
   parsedSlots: Slot[] | undefined;
+  parsedAconds: Acond[] | undefined;
 };

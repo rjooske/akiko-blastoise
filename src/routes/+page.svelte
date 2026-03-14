@@ -1,19 +1,27 @@
 <script lang="ts">
-  // import { browser } from "$app/environment";
+  import { dev } from "$app/environment";
   import {
     slotToString,
     termToString,
     whenToString,
+    acondsToString,
+    isAvailableIn,
     type Course,
     type Slot,
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
   import { assert } from "$lib/util";
-  // import testExcelFile from "../excel/kdb_20251010212030.xlsx?base64";
-  // import testExcelFile from "../excel/test.xlsx?base64";
   import SlotSelector from "./SlotSelector.svelte";
   import * as exceljs from "exceljs";
   import { SvelteMap } from "svelte/reactivity";
+
+  const testFiles = dev
+    ? import.meta.glob<string>(["../excel/*.xlsx", "!../excel/~*.xlsx"], {
+        eager: true,
+        query: "?base64",
+        import: "default",
+      })
+    : {};
 
   function createSyllabusUrl(year: string, courseId: string): string {
     return `https://kdb.tsukuba.ac.jp/syllabi/${year}/${courseId}/jpn`;
@@ -30,27 +38,73 @@
   let courses = $state.raw<Course[] | undefined>();
   let courseIdToSlots = $state(new SvelteMap<string, Slot[]>());
   let year = $state(getAcademicYear(new Date()));
-  let onlyShowFailed = $state(true);
+  let showAvailable = $state(false);
+  let showUnavailable = $state(false);
+  let showFailedId = $state(true);
+  let showFailedCredit = $state(true);
+  let showFailedExpects = $state(true);
+  let showFailedTermSets = $state(true);
+  let showFailedWhenSets = $state(true);
+  let showFailedSlots = $state(true);
+  let showFailedAconds = $state(true);
+  let ignoreGraduateCourses = $state(true);
 
-  let visibleCourses = $derived.by(() => {
+  function checkAllVisibility() {
+    showAvailable = true;
+    showUnavailable = true;
+    showFailedId = true;
+    showFailedCredit = true;
+    showFailedExpects = true;
+    showFailedTermSets = true;
+    showFailedWhenSets = true;
+    showFailedSlots = true;
+    showFailedAconds = true;
+  }
+
+  function uncheckAllVisibility() {
+    showAvailable = false;
+    showUnavailable = false;
+    showFailedId = false;
+    showFailedCredit = false;
+    showFailedExpects = false;
+    showFailedTermSets = false;
+    showFailedWhenSets = false;
+    showFailedSlots = false;
+    showFailedAconds = false;
+  }
+
+  const filteredCourses = $derived.by(() => {
     if (courses === undefined) {
       return undefined;
     }
+    if (ignoreGraduateCourses) {
+      return courses.filter((c) => !c.id.startsWith("0"));
+    }
+    return courses;
+  });
 
-    if (!onlyShowFailed) {
-      return courses;
+  let visibleCourses = $derived.by(() => {
+    if (filteredCourses === undefined) {
+      return undefined;
     }
 
-    const cs = courses.filter(
-      (c) =>
-        c.parsedId === undefined ||
-        c.parsedCredit === undefined ||
-        c.parsedExpects === undefined ||
-        c.parsedTermSets === undefined ||
-        c.parsedWhenSets === undefined ||
-        c.parsedSlots === undefined,
-    );
-    return cs;
+    return filteredCourses.filter((c) => {
+      if (c.parsedId === undefined && showFailedId) return true;
+      if (c.parsedCredit === undefined && showFailedCredit) return true;
+      if (c.parsedExpects === undefined && showFailedExpects) return true;
+      if (c.parsedTermSets === undefined && showFailedTermSets) return true;
+      if (c.parsedWhenSets === undefined && showFailedWhenSets) return true;
+      if (c.parsedSlots === undefined && showFailedSlots) return true;
+      if (c.parsedAconds === undefined && showFailedAconds) return true;
+
+      if (c.parsedAconds !== undefined) {
+        const available = isAvailableIn(c.parsedAconds, year);
+        if (available && showAvailable) return true;
+        if (!available && showUnavailable) return true;
+      }
+
+      return false;
+    });
   });
 
   async function loadFile(bytes: ArrayBuffer): Promise<void> {
@@ -73,13 +127,22 @@
     await loadFile(bytes.buffer);
   }
 
+  async function loadFromBase64(base64: string): Promise<void> {
+    const bytesString = window.atob(base64);
+    const bytes = new Uint8Array(bytesString.length);
+    for (let i = 0; i < bytesString.length; i++) {
+      bytes[i] = bytesString[i].charCodeAt(0);
+    }
+    await loadFile(bytes.buffer);
+  }
+
   function handleCopyOutput(): void {
-    if (courses === undefined) {
+    if (filteredCourses === undefined) {
       return;
     }
     let elements = "";
-    for (let i = 0; i < courses.length; i++) {
-      const course = courses[i];
+    for (let i = 0; i < filteredCourses.length; i++) {
+      const course = filteredCourses[i];
       if (
         !(
           course.parsedId !== undefined &&
@@ -102,6 +165,7 @@
           name: course.name,
           credit: course.parsedCredit,
           slots,
+          aconds: course.parsedAconds,
         }) + "\n";
     }
     const output = `import { KnownCourse } from "../akiko";
@@ -109,18 +173,6 @@ export const knownCourses = [
 ${elements}] as KnownCourse[];`;
     window.navigator.clipboard.writeText(output);
   }
-
-  // async function loadTestFile() {
-  //   const bytesString = window.atob(testExcelFile);
-  //   const bytes = new Uint8Array(bytesString.length);
-  //   for (let i = 0; i < bytesString.length; i++) {
-  //     bytes[i] = bytesString[i].codePointAt(0) ?? 0;
-  //   }
-  // }
-  //
-  // if (browser) {
-  //   loadTestFile();
-  // }
 </script>
 
 <header>
@@ -134,15 +186,75 @@ ${elements}] as KnownCourse[];`;
   科目一覧：
   <input type="file" oninput={(e) => handleFileInput(e.currentTarget)} />
 </label>
+{#if dev}
+  <span class="test-files">
+    {#each Object.entries(testFiles) as [path, base64]}
+      <button onclick={() => loadFromBase64(base64)}>
+        {path.split("/").pop()}
+      </button>
+    {/each}
+  </span>
+{/if}
 <br />
 <label>
   年度：
   <input type="number" bind:value={year} />
 </label>
 <br />
+<fieldset>
+  <legend>表示設定</legend>
+  <button onclick={checkAllVisibility}>全てチェック</button>
+  <button onclick={uncheckAllVisibility}>全て外す</button>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showAvailable} />
+    {year}年度に開講される科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showUnavailable} />
+    {year}年度に開講されない科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showFailedId} />
+    科目番号のパースに失敗した科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showFailedCredit} />
+    単位数のパースに失敗した科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showFailedExpects} />
+    標準履修年次のパースに失敗した科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showFailedTermSets} />
+    実施学期のパースに失敗した科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showFailedWhenSets} />
+    曜時限のパースに失敗した科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showFailedSlots} />
+    実施学期＋曜時限のパースに失敗した科目を表示
+  </label>
+  <br />
+  <label>
+    <input type="checkbox" bind:checked={showFailedAconds} />
+    開講状況(備考)のパースに失敗した科目を表示
+  </label>
+</fieldset>
+<br />
 <label>
-  <input type="checkbox" bind:checked={onlyShowFailed} />
-  パースに失敗した科目のみ表示
+  <input type="checkbox" bind:checked={ignoreGraduateCourses} />
+  院の科目を除く
 </label>
 <br />
 <button disabled={courses === undefined} onclick={handleCopyOutput}>
@@ -160,6 +272,9 @@ ${elements}] as KnownCourse[];`;
       <th>標準履修年次</th>
       <th>実施学期</th>
       <th>曜時限</th>
+      <th>備考</th>
+      <th>開講状況</th>
+      <th>今年度開講</th>
       <th>実施学期＋曜時限</th>
     </tr>
   </thead>
@@ -172,6 +287,9 @@ ${elements}] as KnownCourse[];`;
         <td><pre>{c.expects}</pre></td>
         <td><pre>{c.term}</pre></td>
         <td><pre>{c.when}</pre></td>
+        <td><pre class="remark">{c.remark}</pre></td>
+        <td></td>
+        <td></td>
         <td></td>
       </tr>
       <tr class="parsed">
@@ -235,6 +353,32 @@ ${elements}] as KnownCourse[];`;
                 </li>
               {/each}
             </ul>
+          {:else}
+            <div class="cross">❌</div>
+          {/if}
+        </td>
+        <td>
+          <span class="remark">
+            {c.remark}
+          </span>
+        </td>
+        <td>
+          {#if c.parsedAconds !== undefined}
+            {acondsToString(c.parsedAconds)}
+          {:else}
+            <div class="cross">❌</div>
+          {/if}
+        </td>
+        <td>
+          {#if c.parsedAconds !== undefined}
+            {@const available = isAvailableIn(c.parsedAconds, year)}
+            {#if available === true}
+              〇
+            {:else if available === false}
+              ❌
+            {:else}
+              ❓
+            {/if}
           {:else}
             <div class="cross">❌</div>
           {/if}
@@ -394,5 +538,25 @@ ${elements}] as KnownCourse[];`;
 
   * + .slot-selector {
     margin-top: 10px;
+  }
+
+  .remark {
+    max-width: 30vh;
+    overflow-x: auto;
+  }
+
+  span.remark {
+    display: block;
+  }
+
+  .test-files {
+    margin-left: 10px;
+    display: inline-flex;
+    gap: 5px;
+
+    & > button {
+      padding: 2px 5px;
+      font-size: 0.8rem;
+    }
   }
 </style>

@@ -1,7 +1,5 @@
 export function assert(b: boolean, message = "Assertion failed"): asserts b {
-  if (!b) {
-    throw new Error(message);
-  }
+  if (!b) throw new Error(message);
 }
 
 export function unreachable(_: never): never {
@@ -9,21 +7,22 @@ export function unreachable(_: never): never {
 }
 
 export function strictParseInt(s: string): number | undefined {
-  if (!/^\-?[0-9]+$/.test(s)) {
-    return undefined;
-  }
+  if (!/^\-?[0-9]+$/.test(s)) return undefined;
   const n = parseInt(s);
-  if (!isNaN(n)) {
-    return n;
-  }
+  if (!isNaN(n)) return n;
 }
 
 export function strictParseFloat(s: string): number | undefined {
-  if (!/^\-?[0-9]*(\.[0-9]+)?$/.test(s)) {
-    return undefined;
-  }
+  if (!/^\-?[0-9]*(\.[0-9]+)?$/.test(s)) return undefined;
   const n = parseFloat(s);
-  if (!isNaN(n)) {
-    return n;
+  if (!isNaN(n)) return n;
+}
+
+export function exactlyOne<T>(ts: Iterable<T>): T | undefined {
+  let res: T | undefined;
+  for (const t of ts) {
+    if (res !== undefined) return undefined;
+    res = t;
   }
+  return res;
 }
