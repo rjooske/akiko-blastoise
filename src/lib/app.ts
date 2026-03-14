@@ -155,35 +155,6 @@ export type Acond =
   | { kind: "closed-after"; year: number }
   | { kind: "periodic"; startYear: number; interval: number };
 
-export function acondsToString(aconds: Acond[]): string {
-  if (aconds.length === 0) {
-    return "毎年";
-  }
-
-  return aconds
-    .map((a) => {
-      switch (a.kind) {
-        case "unavailable-in":
-          return `${a.year}年度休講`;
-        case "odd-year-only":
-          return "奇数年";
-        case "even-year-only":
-          return "偶数年";
-        case "principally-biennial":
-          return "原則隔年";
-        case "biennial":
-          return "隔年";
-        case "closed-after":
-          return `${a.year}年度で閉講`;
-        case "periodic":
-          return `${a.startYear}年度より${a.interval}年おき`;
-        default:
-          unreachable(a);
-      }
-    })
-    .join(", ");
-}
-
 export type Availability = "available" | "unavailable" | "indeterminable";
 
 export function getAvailability(aconds: Acond[], year: number): Availability {
