@@ -184,34 +184,33 @@ export function acondsToString(aconds: Acond[]): string {
     .join(", ");
 }
 
-export function isAvailableIn(
-  aconds: Acond[],
-  year: number,
-): boolean | undefined {
+export type Availability = "available" | "unavailable" | "indeterminable";
+
+export function getAvailability(aconds: Acond[], year: number): Availability {
   const onlyOne = exactlyOne(aconds);
   if (
     onlyOne !== undefined &&
     (onlyOne.kind === "principally-biennial" || onlyOne.kind === "biennial")
   )
-    return undefined;
+    return "indeterminable";
 
   for (const a of aconds) {
     switch (a.kind) {
       case "unavailable-in":
-        if (year === a.year) return false;
+        if (year === a.year) return "unavailable";
         break;
       case "odd-year-only":
-        if (year % 2 === 0) return false;
+        if (year % 2 === 0) return "unavailable";
         break;
       case "even-year-only":
-        if (year % 2 !== 0) return false;
+        if (year % 2 !== 0) return "unavailable";
         break;
       case "closed-after":
-        if (year > a.year) return false;
+        if (year > a.year) return "unavailable";
         break;
       case "periodic":
         if (!(year >= a.startYear && (year - a.startYear) % a.interval === 0))
-          return false;
+          return "unavailable";
         break;
       case "principally-biennial":
       case "biennial":
@@ -221,7 +220,7 @@ export function isAvailableIn(
     }
   }
 
-  return true;
+  return "available";
 }
 
 export type Course = {

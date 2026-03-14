@@ -5,7 +5,7 @@
     termToString,
     whenToString,
     acondsToString,
-    isAvailableIn,
+    getAvailability,
     type Course,
     type Slot,
   } from "$lib/app";
@@ -38,8 +38,9 @@
   let courses = $state.raw<Course[] | undefined>();
   let courseIdToSlots = $state(new SvelteMap<string, Slot[]>());
   let year = $state(getAcademicYear(new Date()));
-  let showAvailable = $state(false);
-  let showUnavailable = $state(false);
+  let showAvailable = $state(true);
+  let showUnavailable = $state(true);
+  let showIndeterminable = $state(true);
   let showFailedId = $state(true);
   let showFailedCredit = $state(true);
   let showFailedExpects = $state(true);
@@ -52,6 +53,7 @@
   function checkAllVisibility() {
     showAvailable = true;
     showUnavailable = true;
+    showIndeterminable = true;
     showFailedId = true;
     showFailedCredit = true;
     showFailedExpects = true;
@@ -64,6 +66,7 @@
   function uncheckAllVisibility() {
     showAvailable = false;
     showUnavailable = false;
+    showIndeterminable = false;
     showFailedId = false;
     showFailedCredit = false;
     showFailedExpects = false;
@@ -98,9 +101,10 @@
       if (c.parsedAconds === undefined && showFailedAconds) return true;
 
       if (c.parsedAconds !== undefined) {
-        const available = isAvailableIn(c.parsedAconds, year);
-        if (available && showAvailable) return true;
-        if (!available && showUnavailable) return true;
+        const available = getAvailability(c.parsedAconds, year);
+        if (available === "available" && showAvailable) return true;
+        if (available === "unavailable" && showUnavailable) return true;
+        if (available === "indeterminable" && showIndeterminable) return true;
       }
 
       return false;
@@ -207,16 +211,6 @@ ${elements}] as KnownCourse[];`;
   <button onclick={uncheckAllVisibility}>全て外す</button>
   <br />
   <label>
-    <input type="checkbox" bind:checked={showAvailable} />
-    {year}年度に開講される科目を表示
-  </label>
-  <br />
-  <label>
-    <input type="checkbox" bind:checked={showUnavailable} />
-    {year}年度に開講されない科目を表示
-  </label>
-  <br />
-  <label>
     <input type="checkbox" bind:checked={showFailedId} />
     科目番号のパースに失敗した科目を表示
   </label>
@@ -274,7 +268,14 @@ ${elements}] as KnownCourse[];`;
       <th>曜時限</th>
       <th>備考</th>
       <th>開講状況</th>
-      <th>今年度開講</th>
+      <th>
+        今年度開講
+        <div class="availability-filter">
+          <label><input type="checkbox" bind:checked={showAvailable} />〇</label>
+          <label><input type="checkbox" bind:checked={showUnavailable} />❌</label>
+          <label><input type="checkbox" bind:checked={showIndeterminable} />❓</label>
+        </div>
+      </th>
       <th>実施学期＋曜時限</th>
     </tr>
   </thead>
@@ -371,10 +372,10 @@ ${elements}] as KnownCourse[];`;
         </td>
         <td>
           {#if c.parsedAconds !== undefined}
-            {@const available = isAvailableIn(c.parsedAconds, year)}
-            {#if available === true}
+            {@const available = getAvailability(c.parsedAconds, year)}
+            {#if available === "available"}
               〇
-            {:else if available === false}
+            {:else if available === "unavailable"}
               ❌
             {:else}
               ❓
@@ -547,6 +548,13 @@ ${elements}] as KnownCourse[];`;
 
   span.remark {
     display: block;
+  }
+
+  .availability-filter {
+    display: flex;
+    gap: 8px;
+    margin-top: 4px;
+    font-weight: normal;
   }
 
   .test-files {
