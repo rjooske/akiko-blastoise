@@ -188,6 +188,8 @@ function parseTermSet(s: string): Term[] | undefined {
     }
   };
 
+  if (tokens.length === 0) return undefined;
+
   const terms: Term[] = [];
   {
     let i = 0;

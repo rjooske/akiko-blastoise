@@ -36,6 +36,7 @@
   }
 
   function acondsToString(aconds: Acond[]): string {
+    if (aconds.length === 0) return "（空）";
     return aconds
       .map((a) => {
         switch (a.kind) {
@@ -142,13 +143,30 @@
     }
 
     return filteredCourses.filter((c) => {
-      if (c.parsedId !== undefined ? !showSuccessId : !showFailedId) return false;
-      if (c.parsedCredit !== undefined ? !showSuccessCredit : !showFailedCredit) return false;
-      if (c.parsedExpects !== undefined ? !showSuccessExpects : !showFailedExpects) return false;
-      if (c.parsedTermSets !== undefined ? !showSuccessTermSets : !showFailedTermSets) return false;
-      if (c.parsedWhenSets !== undefined ? !showSuccessWhenSets : !showFailedWhenSets) return false;
-      if (c.parsedSlots !== undefined ? !showSuccessSlots : !showFailedSlots) return false;
-      if (c.parsedAconds !== undefined ? !showSuccessAconds : !showFailedAconds) return false;
+      if (c.parsedId !== undefined ? !showSuccessId : !showFailedId)
+        return false;
+      if (c.parsedCredit !== undefined ? !showSuccessCredit : !showFailedCredit)
+        return false;
+      if (
+        c.parsedExpects !== undefined ? !showSuccessExpects : !showFailedExpects
+      )
+        return false;
+      if (
+        c.parsedTermSets !== undefined
+          ? !showSuccessTermSets
+          : !showFailedTermSets
+      )
+        return false;
+      if (
+        c.parsedWhenSets !== undefined
+          ? !showSuccessWhenSets
+          : !showFailedWhenSets
+      )
+        return false;
+      if (c.parsedSlots !== undefined ? !showSuccessSlots : !showFailedSlots)
+        return false;
+      if (c.parsedAconds !== undefined ? !showSuccessAconds : !showFailedAconds)
+        return false;
 
       if (c.parsedAconds !== undefined) {
         const available = getAvailability(c.parsedAconds, year);
@@ -293,7 +311,9 @@ ${elements}] as KnownCourse[];`;
         <input type="number" bind:value={rowLimit} min="1" />
       </label>
       {#if visibleCourses !== undefined}
-        <div class="count">{displayedCourses?.length} / {visibleCourses.length} 件</div>
+        <div class="count">
+          {displayedCourses?.length} / {visibleCourses.length} 件
+        </div>
       {/if}
     </section>
 
@@ -304,70 +324,124 @@ ${elements}] as KnownCourse[];`;
     </section>
   </aside>
 
-  <main onscroll={(e) => {
-    const el = e.currentTarget;
-    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1) rowLimit += 100;
-  }}>
+  <main
+    onscroll={(e) => {
+      const el = e.currentTarget;
+      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1)
+        rowLimit += 100;
+    }}
+  >
     <table class="courses">
       <thead>
         <tr>
           <th>
             科目番号
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showSuccessId} />✅</label>
-              <label><input type="checkbox" bind:checked={showFailedId} />❌</label>
+              <label>
+                <input type="checkbox" bind:checked={showSuccessId} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showFailedId} />
+                ❌
+              </label>
             </div>
           </th>
           <th>科目名</th>
           <th>
             単位数
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showSuccessCredit} />✅</label>
-              <label><input type="checkbox" bind:checked={showFailedCredit} />❌</label>
+              <label>
+                <input type="checkbox" bind:checked={showSuccessCredit} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showFailedCredit} />
+                ❌
+              </label>
             </div>
           </th>
           <th>
             標準履修年次
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showSuccessExpects} />✅</label>
-              <label><input type="checkbox" bind:checked={showFailedExpects} />❌</label>
+              <label>
+                <input type="checkbox" bind:checked={showSuccessExpects} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showFailedExpects} />
+                ❌
+              </label>
             </div>
           </th>
           <th>
             実施学期
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showSuccessTermSets} />✅</label>
-              <label><input type="checkbox" bind:checked={showFailedTermSets} />❌</label>
+              <label>
+                <input type="checkbox" bind:checked={showSuccessTermSets} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showFailedTermSets} />
+                ❌
+              </label>
             </div>
           </th>
           <th>
             曜時限
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showSuccessWhenSets} />✅</label>
-              <label><input type="checkbox" bind:checked={showFailedWhenSets} />❌</label>
+              <label>
+                <input type="checkbox" bind:checked={showSuccessWhenSets} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showFailedWhenSets} />
+                ❌
+              </label>
             </div>
           </th>
           <th>備考</th>
           <th>
             開講状況
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showSuccessAconds} />✅</label>
-              <label><input type="checkbox" bind:checked={showFailedAconds} />❌</label>
+              <label>
+                <input type="checkbox" bind:checked={showSuccessAconds} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showFailedAconds} />
+                ❌
+              </label>
             </div>
           </th>
           <th>
             今年度開講
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showAvailable} />✅</label>
-              <label><input type="checkbox" bind:checked={showUnavailable} />❌</label>
-              <label><input type="checkbox" bind:checked={showIndeterminable} />❓</label>
+              <label>
+                <input type="checkbox" bind:checked={showAvailable} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showUnavailable} />
+                ❌
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showIndeterminable} />
+                ❓
+              </label>
             </div>
           </th>
           <th>
             実施学期＋曜時限
             <div class="col-filter">
-              <label><input type="checkbox" bind:checked={showSuccessSlots} />✅</label>
-              <label><input type="checkbox" bind:checked={showFailedSlots} />❌</label>
+              <label>
+                <input type="checkbox" bind:checked={showSuccessSlots} />
+                ✅
+              </label>
+              <label>
+                <input type="checkbox" bind:checked={showFailedSlots} />
+                ❌
+              </label>
             </div>
           </th>
         </tr>
