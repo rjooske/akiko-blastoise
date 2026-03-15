@@ -28,7 +28,7 @@ function findCellWithTextTrimmed(
 }
 
 function parseCredit(s: string): number | undefined {
-  if (s === "-") {
+  if (s === "—" /* Em dash */) {
     return 0;
   }
   return strictParseFloat(s);
