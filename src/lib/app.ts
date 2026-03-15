@@ -90,6 +90,9 @@ export function whenToString(w: When): string {
   }
 }
 
+export type TermSet = Term[];
+export type WhenSet = When[];
+
 export type Slot = { term: Term; when: When };
 
 export function slotToString(s: Slot): string {
@@ -97,8 +100,8 @@ export function slotToString(s: Slot): string {
 }
 
 export function createSlots(
-  termSets: Term[][],
-  whenSets: When[][],
+  termSets: TermSet[],
+  whenSets: WhenSet[],
 ): Slot[] | undefined {
   const slots: Slot[] = [];
   if (termSets.length === 1) {
@@ -155,6 +158,55 @@ export type Acond =
   | { kind: "closed-after"; year: number }
   | { kind: "periodic"; startYear: number; interval: number };
 
+const ACOND_KIND_ORDER: Record<Acond["kind"], number> = {
+  "unavailable-in": 0,
+  "odd-year-only": 1,
+  "even-year-only": 2,
+  "principally-biennial": 3,
+  biennial: 4,
+  "closed-after": 5,
+  periodic: 6,
+};
+
+export function acondCompare(a: Acond, b: Acond): number {
+  const kindDiff = ACOND_KIND_ORDER[a.kind] - ACOND_KIND_ORDER[b.kind];
+  if (kindDiff !== 0) return kindDiff;
+  switch (a.kind) {
+    case "unavailable-in":
+      return a.year - (b as typeof a).year;
+    case "odd-year-only":
+    case "even-year-only":
+    case "principally-biennial":
+    case "biennial":
+      return 0;
+    case "closed-after":
+      return a.year - (b as typeof a).year;
+    case "periodic":
+      return (
+        a.startYear - (b as typeof a).startYear ||
+        a.interval - (b as typeof a).interval
+      );
+    default:
+      unreachable(a);
+  }
+}
+
+export function acondEqual(a: Acond, b: Acond): boolean {
+  return acondCompare(a, b) === 0;
+}
+
+export function acondsCompare(a: Acond[], b: Acond[]): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const d = acondCompare(a[i], b[i]);
+    if (d !== 0) return d;
+  }
+  return a.length - b.length;
+}
+
+export function acondsEqual(a: Acond[], b: Acond[]): boolean {
+  return a.length === b.length && a.every((x, i) => acondEqual(x, b[i]));
+}
+
 export type Availability = "available" | "unavailable" | "indeterminable";
 
 export function getAvailability(aconds: Acond[], year: number): Availability {
@@ -205,8 +257,8 @@ export type Course = {
   parsedId: CourseId | undefined;
   parsedCredit: number | undefined;
   parsedExpects: number[] | undefined;
-  parsedTermSets: Term[][] | undefined;
-  parsedWhenSets: When[][] | undefined;
+  parsedTermSets: TermSet[] | undefined;
+  parsedWhenSets: WhenSet[] | undefined;
   parsedSlots: Slot[] | undefined;
   parsedAconds: Acond[] | undefined;
 };

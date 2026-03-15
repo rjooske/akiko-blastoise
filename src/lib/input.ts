@@ -5,8 +5,8 @@ import {
   type Acond,
   type Course,
   type Dow,
-  type Term,
-  type When,
+  type TermSet,
+  type WhenSet,
 } from "./app";
 import { assert, strictParseFloat, strictParseInt, unreachable } from "./util";
 import type { Cell, Worksheet } from "exceljs";
@@ -81,7 +81,7 @@ function parseExpects(s: string): number[] | undefined {
   }
 }
 
-function parseTermSet(s: string): Term[] | undefined {
+function parseTermSet(s: string): TermSet | undefined {
   type Token =
     | "spring-break"
     | "summer-break"
@@ -125,7 +125,7 @@ function parseTermSet(s: string): Term[] | undefined {
     return undefined;
   }
 
-  const parseTerm = (i: number): [number, Term[]] | undefined => {
+  const parseTerm = (i: number): [number, TermSet] | undefined => {
     if (i >= tokens.length) {
       return undefined;
     }
@@ -143,7 +143,7 @@ function parseTermSet(s: string): Term[] | undefined {
         return [i + 1, ["all-year"]];
       case "spring": {
         i++;
-        const terms: Term[] = [];
+        const terms: TermSet = [];
         if (i < tokens.length && tokens[i] === "a") {
           terms.push("spring-a");
           i++;
@@ -162,7 +162,7 @@ function parseTermSet(s: string): Term[] | undefined {
       }
       case "autumn": {
         i++;
-        const terms: Term[] = [];
+        const terms: TermSet = [];
         if (i < tokens.length && tokens[i] === "a") {
           terms.push("autumn-a");
           i++;
@@ -190,7 +190,7 @@ function parseTermSet(s: string): Term[] | undefined {
 
   if (tokens.length === 0) return undefined;
 
-  const terms: Term[] = [];
+  const terms: TermSet = [];
   {
     let i = 0;
     while (i < tokens.length) {
@@ -209,8 +209,8 @@ function parseTermSet(s: string): Term[] | undefined {
   return terms;
 }
 
-function parseTermSets(s: string): Term[][] | undefined {
-  const sets: Term[][] = [];
+function parseTermSets(s: string): TermSet[] | undefined {
+  const sets: TermSet[] = [];
   for (const chunk of s.split("\n")) {
     const set = parseTermSet(chunk.trim());
     if (set === undefined) {
@@ -221,7 +221,7 @@ function parseTermSets(s: string): Term[][] | undefined {
   return sets;
 }
 
-function parseWhenSet(s: string): When[] | undefined {
+function parseWhenSet(s: string): WhenSet | undefined {
   type Token =
     | "mon"
     | "tue"
@@ -377,7 +377,7 @@ function parseWhenSet(s: string): When[] | undefined {
     return [i + 1, t];
   };
 
-  const parseWhenSet = (i: number): [number, When[]] | undefined => {
+  const parseWhenSet = (i: number): [number, WhenSet] | undefined => {
     if (i >= tokens.length) {
       return undefined;
     }
@@ -412,7 +412,7 @@ function parseWhenSet(s: string): When[] | undefined {
     if (periods === undefined) {
       return undefined;
     }
-    const set: When[] = [];
+    const set: WhenSet = [];
     for (const dow of dows) {
       for (const period of periods) {
         set.push({ kind: "regular", dow, period });
@@ -421,7 +421,7 @@ function parseWhenSet(s: string): When[] | undefined {
     return [i, set];
   };
 
-  const parse = (): When[] | undefined => {
+  const parse = (): WhenSet | undefined => {
     let i = 0;
     const maybeFirstSet = parseWhenSet(i);
     if (maybeFirstSet === undefined) {
@@ -429,7 +429,7 @@ function parseWhenSet(s: string): When[] | undefined {
     }
     const [newI, first] = maybeFirstSet;
     i = newI;
-    const set: When[] = first;
+    const set: WhenSet = first;
     while (i < tokens.length && tokens[i] === "comma") {
       i++;
       const maybeNextSet = parseWhenSet(i);
@@ -450,8 +450,8 @@ function parseWhenSet(s: string): When[] | undefined {
   return parse();
 }
 
-function parseWhenSets(s: string): When[][] | undefined {
-  const sets: When[][] = [];
+function parseWhenSets(s: string): WhenSet[] | undefined {
+  const sets: WhenSet[] = [];
   for (const chunk of s.split("\n")) {
     const set = parseWhenSet(chunk.trim());
     if (set === undefined) {

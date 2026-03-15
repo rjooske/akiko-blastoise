@@ -5,12 +5,16 @@
     termToString,
     whenToString,
     getAvailability,
+    acondsCompare,
+    acondsEqual,
     type Acond,
     type Course,
     type Slot,
+    type TermSet,
+    type WhenSet,
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
-  import { assert, unreachable } from "$lib/util";
+  import { assert, unreachable, filterMap, dedupe } from "$lib/util";
   import SlotSelector from "./SlotSelector.svelte";
   import * as exceljs from "exceljs";
   import { SvelteMap } from "svelte/reactivity";
@@ -61,9 +65,41 @@
       .join(", ");
   }
 
+  function compareStringArrays(a: string[], b: string[]): number {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      if (a[i] < b[i]) return -1;
+      if (a[i] > b[i]) return 1;
+    }
+    return a.length - b.length;
+  }
+
+  function termSetsCompare(a: TermSet[], b: TermSet[]): number {
+    const aFlat = a.map((set) => set.join(","));
+    const bFlat = b.map((set) => set.join(","));
+    return compareStringArrays(aFlat, bFlat);
+  }
+
+  function termSetsEqual(a: TermSet[], b: TermSet[]): boolean {
+    return termSetsCompare(a, b) === 0;
+  }
+
+  function whenSetsCompare(a: WhenSet[], b: WhenSet[]): number {
+    const aFlat = a.map((set) => set.map(whenToString).join(","));
+    const bFlat = b.map((set) => set.map(whenToString).join(","));
+    return compareStringArrays(aFlat, bFlat);
+  }
+
+  function whenSetsEqual(a: WhenSet[], b: WhenSet[]): boolean {
+    return whenSetsCompare(a, b) === 0;
+  }
+
   let courses = $state.raw<Course[] | undefined>();
   let loading = $state(false);
   let showRaw = $state(false);
+  let activeTab = $state<"table" | "stats">("table");
+  let allAconds = $state.raw<Acond[][]>([]);
+  let allTermSets = $state.raw<TermSet[][]>([]);
+  let allWhenSets = $state.raw<WhenSet[][]>([]);
   let courseIdToSlots = $state(new SvelteMap<string, Slot[]>());
   let year = $state(getAcademicYear(new Date()));
   let showAvailable = $state(true);
@@ -192,6 +228,27 @@
     courses = cs;
     courseIdToSlots.clear();
     loading = false;
+
+    if (cs !== undefined) {
+      let aconds = Array.from(filterMap(cs, (c) => c.parsedAconds));
+      aconds.sort(acondsCompare);
+      aconds = Array.from(dedupe(aconds, acondsEqual));
+      allAconds = aconds;
+
+      let termSets = Array.from(filterMap(cs, (c) => c.parsedTermSets));
+      termSets.sort(termSetsCompare);
+      termSets = Array.from(dedupe(termSets, termSetsEqual));
+      allTermSets = termSets;
+
+      let whenSets = Array.from(filterMap(cs, (c) => c.parsedWhenSets));
+      whenSets.sort(whenSetsCompare);
+      whenSets = Array.from(dedupe(whenSets, whenSetsEqual));
+      allWhenSets = whenSets;
+    } else {
+      allAconds = [];
+      allTermSets = [];
+      allWhenSets = [];
+    }
   }
 
   async function handleFileInput(input: HTMLInputElement): Promise<void> {
@@ -257,6 +314,20 @@ ${elements}] as KnownCourse[];`;
       <img src="akiko_blastoise.png" alt="あきこカメックス" />
       <span>あきこカメックス</span>
     </h1>
+    <nav class="tabs">
+      <button
+        class:active={activeTab === "table"}
+        onclick={() => (activeTab = "table")}
+      >
+        表
+      </button>
+      <button
+        class:active={activeTab === "stats"}
+        onclick={() => (activeTab = "stats")}
+      >
+        統計
+      </button>
+    </nav>
   </header>
 
   <aside class="sidebar">
@@ -325,6 +396,7 @@ ${elements}] as KnownCourse[];`;
   </aside>
 
   <main
+    class:hidden={activeTab !== "table"}
     onscroll={(e) => {
       const el = e.currentTarget;
       if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1)
@@ -588,6 +660,71 @@ ${elements}] as KnownCourse[];`;
       </tbody>
     </table>
   </main>
+
+  {#if activeTab === "stats"}
+    <div class="stats">
+      <section>
+        <h2>実施学期パターン</h2>
+        {#if allTermSets.length === 0}
+          <p class="empty">データなし</p>
+        {:else}
+          <ul class="pattern-list">
+            {#each allTermSets as termSets}
+              <li>
+                <ul class="term-set">
+                  {#each termSets as set}
+                    <li>
+                      <ul class="term">
+                        {#each set as term}
+                          <li>{termToString(term)}</li>
+                        {/each}
+                      </ul>
+                    </li>
+                  {/each}
+                </ul>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+      <section>
+        <h2>曜時限パターン</h2>
+        {#if allWhenSets.length === 0}
+          <p class="empty">データなし</p>
+        {:else}
+          <ul class="pattern-list">
+            {#each allWhenSets as whenSets}
+              <li>
+                <ul class="when-set">
+                  {#each whenSets as set}
+                    <li>
+                      <ul class="when">
+                        {#each set as when}
+                          <li>{whenToString(when)}</li>
+                        {/each}
+                      </ul>
+                    </li>
+                  {/each}
+                </ul>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+      <section>
+        <h2>開講状況パターン</h2>
+        {#if allAconds.length === 0}
+          <p class="empty">データなし</p>
+        {:else}
+          <ul class="pattern-list">
+            {#each allAconds as aconds}
+              <li>{acondsToString(aconds)}</li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
+    </div>
+  {/if}
 </div>
 
 <style lang="scss">
@@ -612,6 +749,7 @@ ${elements}] as KnownCourse[];`;
     grid-column: 1 / -1;
     display: flex;
     align-items: center;
+    gap: 16px;
     padding: 10px 20px;
     border-bottom: 1px solid oklch(88% 0 0);
     background: white;
@@ -625,6 +763,31 @@ ${elements}] as KnownCourse[];`;
 
       img {
         width: 28px;
+      }
+    }
+  }
+
+  .tabs {
+    display: flex;
+    gap: 4px;
+
+    button {
+      padding: 4px 14px;
+      font-size: 0.85rem;
+      border: 1px solid oklch(82% 0 0);
+      border-radius: 4px;
+      background: transparent;
+      cursor: pointer;
+      color: oklch(45% 0 0);
+
+      &.active {
+        background: oklch(25% 0 0);
+        color: white;
+        border-color: oklch(25% 0 0);
+      }
+
+      &:not(.active):hover {
+        background: oklch(94% 0 0);
       }
     }
   }
@@ -736,6 +899,63 @@ ${elements}] as KnownCourse[];`;
   main {
     grid-row: 2;
     overflow: auto;
+
+    &.hidden {
+      display: none;
+    }
+  }
+
+  .stats {
+    grid-column: 2;
+    grid-row: 2;
+    overflow-y: auto;
+    display: flex;
+    align-items: flex-start;
+
+    section {
+      flex: 1;
+      padding: 16px 20px;
+      border-right: 1px solid oklch(88% 0 0);
+
+      &:last-child {
+        border-right: none;
+      }
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: oklch(62% 0 0);
+    }
+
+    .empty {
+      font-size: 0.85rem;
+      color: oklch(62% 0 0);
+    }
+  }
+
+  ul.pattern-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    font-size: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    > li {
+      padding: 8px;
+      border: 1px solid oklch(85% 0 0);
+      border-radius: 4px;
+      background: oklch(98% 0 0);
+
+      &:nth-child(even) {
+        background: oklch(96% 0 0);
+      }
+    }
   }
 
   table.courses {

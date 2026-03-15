@@ -26,3 +26,24 @@ export function exactlyOne<T>(ts: Iterable<T>): T | undefined {
   }
   return res;
 }
+
+export function* filterMap<T, U>(
+  ts: Iterable<T>,
+  f: (t: T) => U | undefined,
+): Generator<U, void, void> {
+  for (const t of ts) {
+    const u = f(t);
+    if (u !== undefined) yield u;
+  }
+}
+
+export function* dedupe<T>(
+  ts: Iterable<T>,
+  equal: (a: T, b: T) => boolean,
+): Generator<T, void, void> {
+  let lastT: T | undefined;
+  for (const t of ts) {
+    if (lastT === undefined || !equal(lastT, t)) yield t;
+    lastT = t;
+  }
+}
