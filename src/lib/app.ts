@@ -158,7 +158,7 @@ export type Acond =
   | { kind: "closed-after"; year: number }
   | { kind: "periodic"; startYear: number; interval: number };
 
-const ACOND_KIND_ORDER: Record<Acond["kind"], number> = {
+const ACOND_KIND_ORDER: { [K in Acond["kind"]]: number } = {
   "unavailable-in": 0,
   "odd-year-only": 1,
   "even-year-only": 2,

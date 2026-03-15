@@ -12,6 +12,7 @@
     type Slot,
     type TermSet,
     type WhenSet,
+    type CourseId,
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
   import { assert, unreachable, filterMap, dedupe } from "$lib/util";
@@ -281,13 +282,15 @@
       return;
     }
     let elements = "";
+    const coursesWithoutSlots: CourseId[] = [];
     for (let i = 0; i < filteredCourses.length; i++) {
       const course = filteredCourses[i];
       if (
         !(
           course.parsedId !== undefined &&
           course.parsedCredit !== undefined &&
-          course.parsedExpects !== undefined
+          course.parsedExpects !== undefined &&
+          course.parsedAconds !== undefined
         )
       ) {
         window.alert("TODO");
@@ -297,18 +300,32 @@
       if (course.parsedSlots !== undefined) {
         slots = course.parsedSlots;
       } else {
-        slots = courseIdToSlots.get(course.id) ?? [];
+        const s = courseIdToSlots.get(course.id);
+        if (s === undefined) {
+          coursesWithoutSlots.push(course.parsedId);
+          slots = [];
+        } else {
+          slots = s;
+        }
       }
       elements +=
         JSON.stringify({
           id: course.parsedId,
           name: course.name,
           credit: course.parsedCredit,
+          expects: course.parsedExpects,
+          term: course.term,
+          when: course.when,
           slots,
-          aconds: course.parsedAconds,
-        }) + "\n";
+          availability: getAvailability(course.parsedAconds, year),
+        }) + ",\n";
     }
-    const output = `import { KnownCourse } from "../akiko";
+    window.alert(
+      `以下の科目の実施学期＋曜時限がありません\n${coursesWithoutSlots.join("\n")}`,
+    );
+    const output = `// @ts-nocheck
+import type { KnownCourse } from "$lib/akiko";
+export const knownCourseYear = ${year};
 export const knownCourses = [
 ${elements}] as KnownCourse[];`;
     window.navigator.clipboard.writeText(output);
@@ -382,7 +399,11 @@ ${elements}] as KnownCourse[];`;
       </label>
       <label class="col">
         科目名
-        <input type="text" bind:value={filterNameQuery} placeholder="部分一致" />
+        <input
+          type="text"
+          bind:value={filterNameQuery}
+          placeholder="部分一致"
+        />
       </label>
       <div class="button-row">
         <button onclick={checkAllVisibility}>全てチェック</button>
