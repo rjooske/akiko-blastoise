@@ -435,7 +435,10 @@ ${elements}] as KnownCourse[];`;
     class:hidden={activeTab !== "table"}
     onscroll={(e) => {
       const el = e.currentTarget;
-      if (el.scrollTop + el.clientHeight >= el.scrollHeight - 1)
+      if (
+        el.scrollTop + el.clientHeight >= el.scrollHeight - 1 &&
+        (visibleCourses?.length ?? 0) > rowLimit
+      )
         rowLimit += 100;
     }}
   >
