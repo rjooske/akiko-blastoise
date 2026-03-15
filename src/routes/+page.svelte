@@ -166,25 +166,15 @@
 
   let rowLimit = $state(100);
 
-  const filteredCourses = $derived.by(() => {
-    if (courses === undefined) {
-      return undefined;
-    }
-    if (ignoreGraduateCourses) {
-      return courses.filter((c) => !c.id.startsWith("0"));
-    }
-    return courses;
-  });
-
   let visibleCourses = $derived.by(() => {
-    if (filteredCourses === undefined) {
+    if (courses === undefined) {
       return undefined;
     }
 
     const idPrefix = filterIdPrefix.trim().toLowerCase();
     const nameQuery = filterNameQuery.trim().toLowerCase();
 
-    return filteredCourses.filter((c) => {
+    return courses.filter((c) => {
       if (idPrefix && !c.id.toLowerCase().startsWith(idPrefix)) return false;
       if (nameQuery && !c.name.toLowerCase().includes(nameQuery)) return false;
       if (c.parsedId !== undefined ? !showSuccessId : !showFailedId)
@@ -229,9 +219,12 @@
     loading = true;
     const w = new exceljs.Workbook();
     await w.xlsx.load(bytes);
-    const cs = parseCourses(w.worksheets[0]);
+    let cs = parseCourses(w.worksheets[0]);
     if (cs === undefined) {
       window.alert("ファイルの読み込みに失敗しました");
+    }
+    if (cs !== undefined && ignoreGraduateCourses) {
+      cs = cs.filter((c) => !c.id.startsWith("0"));
     }
     courses = cs;
     courseIdToSlots.clear();
@@ -278,13 +271,13 @@
   }
 
   function handleCopyOutput(): void {
-    if (filteredCourses === undefined) {
+    if (courses === undefined) {
       return;
     }
     let elements = "";
     const coursesWithoutSlots: CourseId[] = [];
-    for (let i = 0; i < filteredCourses.length; i++) {
-      const course = filteredCourses[i];
+    for (let i = 0; i < courses.length; i++) {
+      const course = courses[i];
       if (
         !(
           course.parsedId !== undefined &&
@@ -361,6 +354,10 @@ ${elements}] as KnownCourse[];`;
         科目一覧
         <input type="file" oninput={(e) => handleFileInput(e.currentTarget)} />
       </label>
+      <label>
+        <input type="checkbox" bind:checked={ignoreGraduateCourses} />
+        院の科目を除く
+      </label>
       {#if loading}
         <span class="loading">読み込み中…</span>
       {/if}
@@ -380,10 +377,6 @@ ${elements}] as KnownCourse[];`;
       <label class="col">
         年度
         <input type="number" bind:value={year} />
-      </label>
-      <label>
-        <input type="checkbox" bind:checked={ignoreGraduateCourses} />
-        院の科目を除く
       </label>
       <label>
         <input type="checkbox" bind:checked={showRaw} />
