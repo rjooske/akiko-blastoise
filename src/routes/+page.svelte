@@ -96,6 +96,8 @@
   let courses = $state.raw<Course[] | undefined>();
   let loading = $state(false);
   let showRaw = $state(false);
+  let filterIdPrefix = $state("");
+  let filterNameQuery = $state("");
   let activeTab = $state<"table" | "stats">("table");
   let allAconds = $state.raw<Acond[][]>([]);
   let allTermSets = $state.raw<TermSet[][]>([]);
@@ -178,7 +180,12 @@
       return undefined;
     }
 
+    const idPrefix = filterIdPrefix.trim().toLowerCase();
+    const nameQuery = filterNameQuery.trim().toLowerCase();
+
     return filteredCourses.filter((c) => {
+      if (idPrefix && !c.id.toLowerCase().startsWith(idPrefix)) return false;
+      if (nameQuery && !c.name.toLowerCase().includes(nameQuery)) return false;
       if (c.parsedId !== undefined ? !showSuccessId : !showFailedId)
         return false;
       if (c.parsedCredit !== undefined ? !showSuccessCredit : !showFailedCredit)
@@ -369,6 +376,14 @@ ${elements}] as KnownCourse[];`;
 
     <section>
       <span class="section-label">フィルター</span>
+      <label class="col">
+        科目番号
+        <input type="text" bind:value={filterIdPrefix} placeholder="前方一致" />
+      </label>
+      <label class="col">
+        科目名
+        <input type="text" bind:value={filterNameQuery} placeholder="部分一致" />
+      </label>
       <div class="button-row">
         <button onclick={checkAllVisibility}>全てチェック</button>
         <button onclick={uncheckAllVisibility}>全て外す</button>
@@ -831,12 +846,18 @@ ${elements}] as KnownCourse[];`;
       }
     }
 
-    input[type="number"] {
+    input[type="number"],
+    input[type="text"] {
       width: 80px;
       padding: 3px 6px;
       font-size: 0.85rem;
       border: 1px solid oklch(82% 0 0);
       border-radius: 4px;
+    }
+
+    input[type="text"] {
+      width: 100%;
+      box-sizing: border-box;
     }
 
     input[type="file"] {
