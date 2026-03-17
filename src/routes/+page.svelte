@@ -5,20 +5,89 @@
     termToString,
     whenToString,
     getAvailability,
-    acondsCompare,
-    acondsEqual,
     type Acond,
     type Course,
-    type Slot,
-    type TermSet,
-    type WhenSet,
     type CourseId,
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
-  import { assert, unreachable, filterMap, dedupe } from "$lib/util";
-  import SlotSelector from "./SlotSelector.svelte";
+  import { assert, unreachable } from "$lib/util";
   import * as exceljs from "exceljs";
-  import { SvelteMap } from "svelte/reactivity";
+  import { z } from "zod";
+
+  const FAILED = "(解析失敗)";
+  const NO_DATA = "(データなし)";
+
+  // ── Syllabus JSON schema ───────────────────────────────────────────────────
+
+  const TermSchema = z.enum([
+    "spring-a", "spring-b", "spring-c",
+    "autumn-a", "autumn-b", "autumn-c",
+    "spring", "autumn", "spring-break", "summer-break", "all-year",
+  ]);
+
+  const DowSchema = z.enum(["mon", "tue", "wed", "thu", "fri", "sat"]);
+
+  const WhenSchema = z.discriminatedUnion("kind", [
+    z.object({ kind: z.literal("regular"), dow: DowSchema, period: z.number() }),
+    z.object({ kind: z.literal("intensive") }),
+    z.object({ kind: z.literal("zuiji") }),
+    z.object({ kind: z.literal("oudan") }),
+    z.object({ kind: z.literal("nt") }),
+  ]);
+
+  const SlotSchema = z.object({ term: TermSchema, when: WhenSchema });
+
+  const CourseIdSchema = z.string().regex(/^[A-Z0-9]{7}$/);
+
+  const SyllabusCourseSchema = z.object({
+    id: CourseIdSchema,
+    name: z.string(),
+    credit: z.number(),
+    expects: z.array(z.number()),
+    slots: z.array(SlotSchema),
+  });
+
+  const SyllabusDataSchema = z.object({
+    courses: z.array(SyllabusCourseSchema),
+    noSyllabus: z.array(CourseIdSchema),
+    badSyllabus: z.array(CourseIdSchema),
+  });
+
+  type SyllabusCourse = z.infer<typeof SyllabusCourseSchema>;
+  type SyllabusData = z.infer<typeof SyllabusDataSchema>;
+
+  type SyllabusLookup =
+    | {
+        courseMap: Map<string, SyllabusCourse>;
+        noSet: Set<string>;
+        badSet: Set<string>;
+      }
+    | undefined;
+
+  // ── Column keys ────────────────────────────────────────────────────────────
+
+  type ColumnKey =
+    | "id"
+    | "credit"
+    | "expects"
+    | "termSets"
+    | "whenSets"
+    | "aconds"
+    | "availability"
+    | "slots"
+    | "syllabusStatus";
+
+  const ALL_COLS: ColumnKey[] = [
+    "id",
+    "credit",
+    "expects",
+    "termSets",
+    "whenSets",
+    "aconds",
+    "availability",
+    "slots",
+    "syllabusStatus",
+  ];
 
   const testFiles = dev
     ? import.meta.glob<string>(["../excel/*.xlsx", "!../excel/~$*.xlsx"], {
@@ -66,32 +135,65 @@
       .join(", ");
   }
 
-  function compareStringArrays(a: string[], b: string[]): number {
-    for (let i = 0; i < Math.min(a.length, b.length); i++) {
-      if (a[i] < b[i]) return -1;
-      if (a[i] > b[i]) return 1;
+  function courseColumnValue(
+    c: Course,
+    col: ColumnKey,
+    year: number,
+    syllabus: SyllabusLookup,
+  ): string {
+    switch (col) {
+      case "id":
+        return c.parsedId ?? FAILED;
+      case "credit":
+        return c.parsedCredit !== undefined ? String(c.parsedCredit) : FAILED;
+      case "expects":
+        return c.parsedExpects !== undefined
+          ? c.parsedExpects.join(", ")
+          : FAILED;
+      case "termSets":
+        return c.parsedTermSets !== undefined
+          ? c.parsedTermSets
+              .map((s) => s.map(termToString).join(" "))
+              .join(" / ")
+          : FAILED;
+      case "whenSets":
+        return c.parsedWhenSets !== undefined
+          ? c.parsedWhenSets
+              .map((s) => s.map(whenToString).join(" "))
+              .join(" / ")
+          : FAILED;
+      case "aconds":
+        return c.parsedAconds !== undefined
+          ? acondsToString(c.parsedAconds)
+          : FAILED;
+      case "availability": {
+        if (c.parsedAconds === undefined) return FAILED;
+        const a = getAvailability(c.parsedAconds, year);
+        switch (a) {
+          case "available":
+            return "✅ 開講";
+          case "unavailable":
+            return "❌ 非開講";
+          case "indeterminable":
+            return "❓ 不明";
+          default:
+            unreachable(a);
+        }
+      }
+      case "slots":
+        return c.parsedSlots !== undefined
+          ? c.parsedSlots.map(slotToString).join(", ")
+          : FAILED;
+      case "syllabusStatus": {
+        if (syllabus === undefined) return NO_DATA;
+        if (syllabus.noSet.has(c.id)) return "シラバスなし";
+        if (syllabus.badSet.has(c.id)) return "解析失敗";
+        if (syllabus.courseMap.has(c.id)) return "あり";
+        return "不明";
+      }
+      default:
+        unreachable(col);
     }
-    return a.length - b.length;
-  }
-
-  function termSetsCompare(a: TermSet[], b: TermSet[]): number {
-    const aFlat = a.map((set) => set.join(","));
-    const bFlat = b.map((set) => set.join(","));
-    return compareStringArrays(aFlat, bFlat);
-  }
-
-  function termSetsEqual(a: TermSet[], b: TermSet[]): boolean {
-    return termSetsCompare(a, b) === 0;
-  }
-
-  function whenSetsCompare(a: WhenSet[], b: WhenSet[]): number {
-    const aFlat = a.map((set) => set.map(whenToString).join(","));
-    const bFlat = b.map((set) => set.map(whenToString).join(","));
-    return compareStringArrays(aFlat, bFlat);
-  }
-
-  function whenSetsEqual(a: WhenSet[], b: WhenSet[]): boolean {
-    return whenSetsCompare(a, b) === 0;
   }
 
   let courses = $state.raw<Course[] | undefined>();
@@ -99,69 +201,90 @@
   let showRaw = $state(false);
   let filterIdPrefix = $state("");
   let filterNameQuery = $state("");
-  let activeTab = $state<"table" | "stats">("table");
-  let allAconds = $state.raw<Acond[][]>([]);
-  let allTermSets = $state.raw<TermSet[][]>([]);
-  let allWhenSets = $state.raw<WhenSet[][]>([]);
-  let courseIdToSlots = $state(new SvelteMap<string, Slot[]>());
   let year = $state(getAcademicYear(new Date()));
-  let showAvailable = $state(true);
-  let showUnavailable = $state(true);
-  let showIndeterminable = $state(true);
-  let showFailedId = $state(true);
-  let showFailedCredit = $state(true);
-  let showFailedExpects = $state(true);
-  let showFailedTermSets = $state(true);
-  let showFailedWhenSets = $state(true);
-  let showFailedSlots = $state(true);
-  let showFailedAconds = $state(true);
-  let showSuccessId = $state(true);
-  let showSuccessCredit = $state(true);
-  let showSuccessExpects = $state(true);
-  let showSuccessTermSets = $state(true);
-  let showSuccessWhenSets = $state(true);
-  let showSuccessAconds = $state(true);
-  let showSuccessSlots = $state(true);
+  let syllabusData = $state.raw<SyllabusData | undefined>(undefined);
+  type Tab = "inspect" | "fix";
+  let activeTab = $state<Tab>("inspect");
+  const COL_LABELS: Record<ColumnKey, string> = {
+    id: "科目番号",
+    credit: "単位数",
+    expects: "標準履修年次",
+    termSets: "実施学期",
+    whenSets: "曜時限",
+    aconds: "開講状況",
+    availability: "今年度開講",
+    slots: "実施学期＋曜時限",
+    syllabusStatus: "シラバス状況",
+  };
+
+  const syllabusLookup = $derived.by((): SyllabusLookup => {
+    if (syllabusData === undefined) return undefined;
+    const courseMap = new Map(syllabusData.courses.map((c) => [c.id, c]));
+    const noSet = new Set(syllabusData.noSyllabus);
+    const badSet = new Set(syllabusData.badSyllabus);
+    return { courseMap, noSet, badSet };
+  });
+
+  let hiddenColumnValues = $state(new Map<ColumnKey, Set<string>>());
+  let openFilterColumn = $state<ColumnKey | undefined>(undefined);
+  let dialogEl = $state<HTMLDialogElement | undefined>(undefined);
   let ignoreGraduateCourses = $state(true);
 
+  $effect(() => {
+    if (openFilterColumn !== undefined) {
+      if (!dialogEl?.open) dialogEl?.showModal();
+    } else {
+      dialogEl?.close();
+    }
+  });
+
+  // Only compute distinct values for the column whose dialog is currently open.
+  const openColumnValues = $derived.by((): string[] => {
+    if (courses === undefined || openFilterColumn === undefined) return [];
+    const seen = new Set<string>();
+    for (const c of courses) {
+      seen.add(courseColumnValue(c, openFilterColumn, year, syllabusLookup));
+    }
+    return [...seen].sort();
+  });
+
+  function columnValues(col: ColumnKey): string[] {
+    if (courses === undefined) return [];
+    const seen = new Set<string>();
+    for (const c of courses) {
+      seen.add(courseColumnValue(c, col, year, syllabusLookup));
+    }
+    return [...seen];
+  }
+
   function checkAllVisibility() {
-    showAvailable = true;
-    showUnavailable = true;
-    showIndeterminable = true;
-    showFailedId = true;
-    showFailedCredit = true;
-    showFailedExpects = true;
-    showFailedTermSets = true;
-    showFailedWhenSets = true;
-    showFailedSlots = true;
-    showFailedAconds = true;
-    showSuccessId = true;
-    showSuccessCredit = true;
-    showSuccessExpects = true;
-    showSuccessTermSets = true;
-    showSuccessWhenSets = true;
-    showSuccessAconds = true;
-    showSuccessSlots = true;
+    hiddenColumnValues = new Map();
   }
 
   function uncheckAllVisibility() {
-    showAvailable = false;
-    showUnavailable = false;
-    showIndeterminable = false;
-    showFailedId = false;
-    showFailedCredit = false;
-    showFailedExpects = false;
-    showFailedTermSets = false;
-    showFailedWhenSets = false;
-    showFailedSlots = false;
-    showFailedAconds = false;
-    showSuccessId = false;
-    showSuccessCredit = false;
-    showSuccessExpects = false;
-    showSuccessTermSets = false;
-    showSuccessWhenSets = false;
-    showSuccessAconds = false;
-    showSuccessSlots = false;
+    hiddenColumnValues = new Map(ALL_COLS.map((col) => [col, new Set(columnValues(col))]));
+  }
+
+  function hasFilter(col: ColumnKey): boolean {
+    const h = hiddenColumnValues.get(col);
+    return h !== undefined && h.size > 0;
+  }
+
+  function toggleColumnValue(col: ColumnKey, value: string): void {
+    const next = new Set(hiddenColumnValues.get(col) ?? []);
+    if (next.has(value)) next.delete(value);
+    else next.add(value);
+    hiddenColumnValues = new Map(hiddenColumnValues).set(col, next);
+  }
+
+  function checkAllColumn(col: ColumnKey): void {
+    const next = new Map(hiddenColumnValues);
+    next.delete(col);
+    hiddenColumnValues = next;
+  }
+
+  function uncheckAllColumn(col: ColumnKey): void {
+    hiddenColumnValues = new Map(hiddenColumnValues).set(col, new Set(columnValues(col)));
   }
 
   let rowLimit = $state(100);
@@ -177,38 +300,10 @@
     return courses.filter((c) => {
       if (idPrefix && !c.id.toLowerCase().startsWith(idPrefix)) return false;
       if (nameQuery && !c.name.toLowerCase().includes(nameQuery)) return false;
-      if (c.parsedId !== undefined ? !showSuccessId : !showFailedId)
-        return false;
-      if (c.parsedCredit !== undefined ? !showSuccessCredit : !showFailedCredit)
-        return false;
-      if (
-        c.parsedExpects !== undefined ? !showSuccessExpects : !showFailedExpects
-      )
-        return false;
-      if (
-        c.parsedTermSets !== undefined
-          ? !showSuccessTermSets
-          : !showFailedTermSets
-      )
-        return false;
-      if (
-        c.parsedWhenSets !== undefined
-          ? !showSuccessWhenSets
-          : !showFailedWhenSets
-      )
-        return false;
-      if (c.parsedSlots !== undefined ? !showSuccessSlots : !showFailedSlots)
-        return false;
-      if (c.parsedAconds !== undefined ? !showSuccessAconds : !showFailedAconds)
-        return false;
-
-      if (c.parsedAconds !== undefined) {
-        const available = getAvailability(c.parsedAconds, year);
-        if (available === "available" && !showAvailable) return false;
-        if (available === "unavailable" && !showUnavailable) return false;
-        if (available === "indeterminable" && !showIndeterminable) return false;
+      for (const [col, hidden] of hiddenColumnValues) {
+        if (hidden.size > 0 && hidden.has(courseColumnValue(c, col, year, syllabusLookup)))
+          return false;
       }
-
       return true;
     });
   });
@@ -227,29 +322,8 @@
       cs = cs.filter((c) => !c.id.startsWith("0"));
     }
     courses = cs;
-    courseIdToSlots.clear();
+    hiddenColumnValues = new Map();
     loading = false;
-
-    if (cs !== undefined) {
-      let aconds = Array.from(filterMap(cs, (c) => c.parsedAconds));
-      aconds.sort(acondsCompare);
-      aconds = Array.from(dedupe(aconds, acondsEqual));
-      allAconds = aconds;
-
-      let termSets = Array.from(filterMap(cs, (c) => c.parsedTermSets));
-      termSets.sort(termSetsCompare);
-      termSets = Array.from(dedupe(termSets, termSetsEqual));
-      allTermSets = termSets;
-
-      let whenSets = Array.from(filterMap(cs, (c) => c.parsedWhenSets));
-      whenSets.sort(whenSetsCompare);
-      whenSets = Array.from(dedupe(whenSets, whenSetsEqual));
-      allWhenSets = whenSets;
-    } else {
-      allAconds = [];
-      allTermSets = [];
-      allWhenSets = [];
-    }
   }
 
   async function handleFileInput(input: HTMLInputElement): Promise<void> {
@@ -268,6 +342,24 @@
       bytes[i] = bytesString[i].charCodeAt(0);
     }
     await loadFile(bytes.buffer);
+  }
+
+  async function handleJsonInput(input: HTMLInputElement): Promise<void> {
+    if (input.files === null || input.files.length === 0) return;
+    const text = await input.files[0].text();
+    let json: unknown;
+    try {
+      json = JSON.parse(text);
+    } catch {
+      window.alert("JSONの解析に失敗しました");
+      return;
+    }
+    const result = SyllabusDataSchema.safeParse(json);
+    if (!result.success) {
+      window.alert("JSONの形式が正しくありません\n" + result.error.message);
+      return;
+    }
+    syllabusData = result.data;
   }
 
   function handleCopyOutput(): void {
@@ -289,17 +381,9 @@
         window.alert("TODO");
         return;
       }
-      let slots: Slot[];
-      if (course.parsedSlots !== undefined) {
-        slots = course.parsedSlots;
-      } else {
-        const s = courseIdToSlots.get(course.id);
-        if (s === undefined) {
-          coursesWithoutSlots.push(course.parsedId);
-          slots = [];
-        } else {
-          slots = s;
-        }
+      const slots = course.parsedSlots ?? [];
+      if (slots.length === 0) {
+        coursesWithoutSlots.push(course.parsedId);
       }
       elements +=
         JSON.stringify({
@@ -323,7 +407,13 @@ export const knownCourses = [
 ${elements}] as KnownCourse[];`;
     window.navigator.clipboard.writeText(output);
   }
+
+  function handleCopyIds(): void {
+    if (courses === undefined) return;
+    window.navigator.clipboard.writeText(courses.map((c) => c.id).join("\n"));
+  }
 </script>
+
 
 <div class="page">
   <header>
@@ -332,18 +422,8 @@ ${elements}] as KnownCourse[];`;
       <span>あきこカメックス</span>
     </h1>
     <nav class="tabs">
-      <button
-        class:active={activeTab === "table"}
-        onclick={() => (activeTab = "table")}
-      >
-        表
-      </button>
-      <button
-        class:active={activeTab === "stats"}
-        onclick={() => (activeTab = "stats")}
-      >
-        統計
-      </button>
+      <button class:active={activeTab === "inspect"} onclick={() => (activeTab = "inspect")}>一覧</button>
+      <button class:active={activeTab === "fix"} onclick={() => (activeTab = "fix")}>修正</button>
     </nav>
   </header>
 
@@ -352,7 +432,11 @@ ${elements}] as KnownCourse[];`;
       <span class="section-label">ファイル</span>
       <label class="col">
         科目一覧
-        <input type="file" oninput={(e) => handleFileInput(e.currentTarget)} />
+        <input type="file" accept=".xlsx" oninput={(e) => handleFileInput(e.currentTarget)} />
+      </label>
+      <label class="col">
+        シラバスJSON
+        <input type="file" accept=".json" oninput={(e) => handleJsonInput(e.currentTarget)} />
       </label>
       <label>
         <input type="checkbox" bind:checked={ignoreGraduateCourses} />
@@ -421,11 +505,14 @@ ${elements}] as KnownCourse[];`;
       <button disabled={courses === undefined} onclick={handleCopyOutput}>
         出力をコピー
       </button>
+      <button disabled={courses === undefined} onclick={handleCopyIds}>
+        科目番号を全てコピー
+      </button>
     </section>
   </aside>
 
   <main
-    class:hidden={activeTab !== "table"}
+    class:hidden={activeTab !== "inspect"}
     onscroll={(e) => {
       const el = e.currentTarget;
       if (
@@ -440,113 +527,77 @@ ${elements}] as KnownCourse[];`;
         <tr>
           <th>
             科目番号
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showSuccessId} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showFailedId} />
-                ❌
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("id")}
+              onclick={() => (openFilterColumn = "id")}
+            >▾</button>
           </th>
           <th>科目名</th>
           <th>
             単位数
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showSuccessCredit} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showFailedCredit} />
-                ❌
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("credit")}
+              onclick={() => (openFilterColumn = "credit")}
+            >▾</button>
           </th>
           <th>
             標準履修年次
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showSuccessExpects} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showFailedExpects} />
-                ❌
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("expects")}
+              onclick={() => (openFilterColumn = "expects")}
+            >▾</button>
           </th>
           <th>
             実施学期
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showSuccessTermSets} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showFailedTermSets} />
-                ❌
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("termSets")}
+              onclick={() => (openFilterColumn = "termSets")}
+            >▾</button>
           </th>
           <th>
             曜時限
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showSuccessWhenSets} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showFailedWhenSets} />
-                ❌
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("whenSets")}
+              onclick={() => (openFilterColumn = "whenSets")}
+            >▾</button>
           </th>
           <th>備考</th>
           <th>
             開講状況
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showSuccessAconds} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showFailedAconds} />
-                ❌
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("aconds")}
+              onclick={() => (openFilterColumn = "aconds")}
+            >▾</button>
           </th>
           <th>
             今年度開講
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showAvailable} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showUnavailable} />
-                ❌
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showIndeterminable} />
-                ❓
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("availability")}
+              onclick={() => (openFilterColumn = "availability")}
+            >▾</button>
           </th>
           <th>
             実施学期＋曜時限
-            <div class="col-filter">
-              <label>
-                <input type="checkbox" bind:checked={showSuccessSlots} />
-                ✅
-              </label>
-              <label>
-                <input type="checkbox" bind:checked={showFailedSlots} />
-                ❌
-              </label>
-            </div>
+            <button
+              class="filter-btn"
+              class:active={hasFilter("slots")}
+              onclick={() => (openFilterColumn = "slots")}
+            >▾</button>
+          </th>
+          <th>
+            シラバス状況
+            <button
+              class="filter-btn"
+              class:active={hasFilter("syllabusStatus")}
+              onclick={() => (openFilterColumn = "syllabusStatus")}
+            >▾</button>
           </th>
         </tr>
       </thead>
@@ -560,6 +611,7 @@ ${elements}] as KnownCourse[];`;
             <td><pre>{c.term}</pre></td>
             <td><pre>{c.when}</pre></td>
             <td><pre class="remark">{c.remark}</pre></td>
+            <td></td>
             <td></td>
             <td></td>
             <td></td>
@@ -582,18 +634,10 @@ ${elements}] as KnownCourse[];`;
               </a>
             </td>
             <td>
-              {#if c.parsedCredit !== undefined}
-                {c.parsedCredit}
-              {:else}
-                <div class="cross">❌</div>
-              {/if}
+              {#if c.parsedCredit !== undefined}{c.parsedCredit}{:else}<div class="cross">❌</div>{/if}
             </td>
             <td>
-              {#if c.parsedExpects !== undefined}
-                {c.parsedExpects.join(", ")}
-              {:else}
-                <div class="cross">❌</div>
-              {/if}
+              {#if c.parsedExpects !== undefined}{c.parsedExpects.join(", ")}{:else}<div class="cross">❌</div>{/if}
             </td>
             <td>
               {#if c.parsedTermSets !== undefined}
@@ -656,35 +700,23 @@ ${elements}] as KnownCourse[];`;
             <td>
               {#if c.parsedSlots !== undefined}
                 <ul class="slot">
-                  {#each c.parsedSlots as s}
-                    <li>{slotToString(s)}</li>
-                  {/each}
+                  {#each c.parsedSlots as s}<li>{slotToString(s)}</li>{/each}
                 </ul>
               {:else}
-                {@const slots = courseIdToSlots.get(c.id)}
-                {#if slots !== undefined && slots.length > 0}
-                  <ul class="slot">
-                    {#each slots as s, j}
-                      <li>
-                        {slotToString(s)}
-                        <button onclick={() => slots.splice(j, 1)}>⨯</button>
-                      </li>
-                    {/each}
-                  </ul>
-                {/if}
-                <div class="slot-selector">
-                  <SlotSelector
-                    handleSlotAdd={(s) => {
-                      let slots = courseIdToSlots.get(c.id);
-                      if (slots === undefined) {
-                        const s = $state([]);
-                        slots = s;
-                      }
-                      slots.push(s);
-                      courseIdToSlots.set(c.id, slots);
-                    }}
-                  />
-                </div>
+                <div class="cross">❌</div>
+              {/if}
+            </td>
+            <td>
+              {#if syllabusLookup === undefined}
+                <span class="no-data">—</span>
+              {:else if syllabusLookup.noSet.has(c.id)}
+                シラバスなし
+              {:else if syllabusLookup.badSet.has(c.id)}
+                解析失敗
+              {:else if syllabusLookup.courseMap.has(c.id)}
+                あり
+              {:else}
+                不明
               {/if}
             </td>
           </tr>
@@ -693,70 +725,40 @@ ${elements}] as KnownCourse[];`;
     </table>
   </main>
 
-  {#if activeTab === "stats"}
-    <div class="stats">
-      <section>
-        <h2>実施学期パターン</h2>
-        {#if allTermSets.length === 0}
-          <p class="empty">データなし</p>
-        {:else}
-          <ul class="pattern-list">
-            {#each allTermSets as termSets}
-              <li>
-                <ul class="term-set">
-                  {#each termSets as set}
-                    <li>
-                      <ul class="term">
-                        {#each set as term}
-                          <li>{termToString(term)}</li>
-                        {/each}
-                      </ul>
-                    </li>
-                  {/each}
-                </ul>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </section>
-      <section>
-        <h2>曜時限パターン</h2>
-        {#if allWhenSets.length === 0}
-          <p class="empty">データなし</p>
-        {:else}
-          <ul class="pattern-list">
-            {#each allWhenSets as whenSets}
-              <li>
-                <ul class="when-set">
-                  {#each whenSets as set}
-                    <li>
-                      <ul class="when">
-                        {#each set as when}
-                          <li>{whenToString(when)}</li>
-                        {/each}
-                      </ul>
-                    </li>
-                  {/each}
-                </ul>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </section>
-      <section>
-        <h2>開講状況パターン</h2>
-        {#if allAconds.length === 0}
-          <p class="empty">データなし</p>
-        {:else}
-          <ul class="pattern-list">
-            {#each allAconds as aconds}
-              <li>{acondsToString(aconds)}</li>
-            {/each}
-          </ul>
-        {/if}
-      </section>
-    </div>
+  {#if activeTab === "fix"}
+    <div class="fix-placeholder">（準備中）</div>
   {/if}
+
+  <dialog
+    bind:this={dialogEl}
+    onclose={() => (openFilterColumn = undefined)}
+    onclick={(e) => {
+      if (e.target === e.currentTarget) openFilterColumn = undefined;
+    }}
+  >
+    {#if openFilterColumn !== undefined}
+      <div class="filter-dialog-header">
+        <strong>{COL_LABELS[openFilterColumn]}</strong>
+        <button onclick={() => (openFilterColumn = undefined)}>✕</button>
+      </div>
+      <div class="filter-dialog-actions">
+        <button onclick={() => checkAllColumn(openFilterColumn!)}>全てチェック</button>
+        <button onclick={() => uncheckAllColumn(openFilterColumn!)}>全て外す</button>
+      </div>
+      <div class="filter-dialog-list">
+        {#each openColumnValues as value}
+          <label>
+            <input
+              type="checkbox"
+              checked={!hiddenColumnValues.get(openFilterColumn)?.has(value)}
+              onchange={() => toggleColumnValue(openFilterColumn!, value)}
+            />
+            {value}
+          </label>
+        {/each}
+      </div>
+    {/if}
+  </dialog>
 </div>
 
 <style lang="scss">
@@ -943,57 +945,13 @@ ${elements}] as KnownCourse[];`;
     }
   }
 
-  .stats {
-    grid-column: 2;
+  .fix-placeholder {
     grid-row: 2;
-    overflow-y: auto;
     display: flex;
-    align-items: flex-start;
-
-    section {
-      flex: 1;
-      padding: 16px 20px;
-      border-right: 1px solid oklch(88% 0 0);
-
-      &:last-child {
-        border-right: none;
-      }
-    }
-
-    h2 {
-      margin: 0 0 12px;
-      font-size: 0.85rem;
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.06em;
-      color: oklch(62% 0 0);
-    }
-
-    .empty {
-      font-size: 0.85rem;
-      color: oklch(62% 0 0);
-    }
-  }
-
-  ul.pattern-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    font-size: 0.85rem;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-
-    > li {
-      padding: 8px;
-      border: 1px solid oklch(85% 0 0);
-      border-radius: 4px;
-      background: oklch(98% 0 0);
-
-      &:nth-child(even) {
-        background: oklch(96% 0 0);
-      }
-    }
+    align-items: center;
+    justify-content: center;
+    color: oklch(60% 0 0);
+    font-size: 1rem;
   }
 
   table.courses {
@@ -1047,6 +1005,10 @@ ${elements}] as KnownCourse[];`;
       width: 160px;
       white-space: normal;
     } // 実施学期＋曜時限
+    th:nth-child(11),
+    td:nth-child(11) {
+      width: 90px;
+    } // シラバス状況
   }
 
   thead tr {
@@ -1110,13 +1072,90 @@ ${elements}] as KnownCourse[];`;
     text-align: center;
   }
 
-  .col-filter {
-    display: flex;
-    gap: 5px;
-    margin-top: 5px;
-    font-weight: normal;
-    font-size: 0.8rem;
+  .no-data {
+    color: oklch(72% 0 0);
   }
+
+  .filter-btn {
+    margin-left: 4px;
+    padding: 1px 4px;
+    font-size: 0.7rem;
+    cursor: pointer;
+    border: 1px solid oklch(78% 0 0);
+    border-radius: 3px;
+    background: transparent;
+
+    &.active {
+      background: oklch(25% 0 0);
+      color: white;
+    }
+  }
+
+  dialog {
+    border: none;
+    border-radius: 8px;
+    padding: 0;
+    width: 420px;
+    max-width: 90vw;
+    max-height: 80vh;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+
+    &::backdrop {
+      background: rgba(0, 0, 0, 0.35);
+    }
+  }
+
+  .filter-dialog-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 16px;
+    border-bottom: 1px solid oklch(88% 0 0);
+    flex-shrink: 0;
+
+    strong {
+      font-size: 0.9rem;
+    }
+
+    button {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 1rem;
+      padding: 2px 6px;
+      color: oklch(50% 0 0);
+      line-height: 1;
+    }
+  }
+
+  .filter-dialog-actions {
+    display: flex;
+    gap: 6px;
+    padding: 8px 16px;
+    border-bottom: 1px solid oklch(92% 0 0);
+    flex-shrink: 0;
+  }
+
+  .filter-dialog-list {
+    overflow-y: auto;
+    padding: 8px 16px;
+    display: flex;
+    flex-direction: column;
+
+    label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 0;
+      font-size: 0.85rem;
+      font-weight: normal;
+      cursor: pointer;
+    }
+  }
+
 
   ul.term-set,
   ul.when-set {
@@ -1188,9 +1227,5 @@ ${elements}] as KnownCourse[];`;
 
   span.remark {
     display: block;
-  }
-
-  * + .slot-selector {
-    margin-top: 8px;
   }
 </style>

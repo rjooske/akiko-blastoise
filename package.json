@@ -28,6 +28,7 @@
     "vite": "^7.3.0"
   },
   "dependencies": {
-    "exceljs": "file:exceljs-4.4.0.tgz"
+    "exceljs": "file:exceljs-4.4.0.tgz",
+    "zod": "^4.3.6"
   }
 }
