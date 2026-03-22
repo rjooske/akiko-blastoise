@@ -1,7 +1,6 @@
 <script lang="ts">
   import { dev } from "$app/environment";
   import {
-    slotToString,
     termToString,
     whenToString,
     getAvailability,
@@ -217,7 +216,8 @@
     | "when-parse-fail"
     | "aconds-parse-fail"
     | "available-but-no-term"
-    | "available-but-no-when";
+    | "available-but-no-when"
+    | "slots-indeterminable";
 
   const ISSUE_LABELS: Record<Issue, string> = {
     "id-parse-fail": "科目番号パース失敗",
@@ -228,6 +228,7 @@
     "aconds-parse-fail": "開講状況パース失敗",
     "available-but-no-term": "今年度開講・実施学期なし",
     "available-but-no-when": "今年度開講・曜時限なし",
+    "slots-indeterminable": "学期・曜時限の組み合わせ不明",
   };
 
   function getCourseIssues(c: Course, y: number): Issue[] {
@@ -238,6 +239,8 @@
     if (c.parsedTermSets === undefined) issues.push("term-parse-fail");
     if (c.parsedWhenSets === undefined) issues.push("when-parse-fail");
     if (c.parsedAconds === undefined) issues.push("aconds-parse-fail");
+    if (c.parsedTermSets !== undefined && c.parsedWhenSets !== undefined && c.parsedSlots === undefined)
+      issues.push("slots-indeterminable");
     if (c.parsedAconds !== undefined && getAvailability(c.parsedAconds, y) === "available") {
       if (c.parsedTermSets !== undefined && c.parsedTermSets.length === 0) issues.push("available-but-no-term");
       if (c.parsedWhenSets !== undefined && c.parsedWhenSets.length === 0) issues.push("available-but-no-when");
