@@ -29,6 +29,7 @@
   },
   "dependencies": {
     "exceljs": "file:exceljs-4.4.0.tgz",
+    "lucide-svelte": "^0.577.0",
     "zod": "^4.3.6"
   }
 }

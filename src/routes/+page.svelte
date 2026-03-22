@@ -13,8 +13,9 @@
   import { assert, unreachable } from "$lib/util";
   import * as exceljs from "exceljs";
   import { z } from "zod";
+  import { CircleCheck, CircleX, CircleQuestionMark, TriangleAlert, Minus } from "lucide-svelte";
 
-  const FAILED = "(解析失敗)";
+  const FAILED = "(パース失敗)";
   const NO_DATA = "(データなし)";
 
   // ── Syllabus JSON schema ───────────────────────────────────────────────────
@@ -74,7 +75,6 @@
     | "whenSets"
     | "aconds"
     | "availability"
-    | "slots"
     | "syllabusStatus";
 
   const ALL_COLS: ColumnKey[] = [
@@ -85,7 +85,6 @@
     "whenSets",
     "aconds",
     "availability",
-    "slots",
     "syllabusStatus",
   ];
 
@@ -93,6 +92,14 @@
     ? import.meta.glob<string>(["../excel/*.xlsx", "!../excel/~$*.xlsx"], {
         eager: true,
         query: "?base64",
+        import: "default",
+      })
+    : {};
+
+  const testJsonFiles = dev
+    ? import.meta.glob<string>("../json/*.json", {
+        eager: true,
+        query: "?raw",
         import: "default",
       })
     : {};
@@ -151,43 +158,35 @@
           ? c.parsedExpects.join(", ")
           : FAILED;
       case "termSets":
-        return c.parsedTermSets !== undefined
-          ? c.parsedTermSets
-              .map((s) => s.map(termToString).join(" "))
-              .join(" / ")
-          : FAILED;
+        if (c.parsedTermSets === undefined) return FAILED;
+        if (c.parsedTermSets.length === 0) return "（空）";
+        return c.parsedTermSets.map((s) => s.map(termToString).join(" ")).join(" / ");
       case "whenSets":
-        return c.parsedWhenSets !== undefined
-          ? c.parsedWhenSets
-              .map((s) => s.map(whenToString).join(" "))
-              .join(" / ")
-          : FAILED;
+        if (c.parsedWhenSets === undefined) return FAILED;
+        if (c.parsedWhenSets.length === 0) return "（空）";
+        return c.parsedWhenSets.map((s) => s.map(whenToString).join(" ")).join(" / ");
       case "aconds":
-        return c.parsedAconds !== undefined
-          ? acondsToString(c.parsedAconds)
-          : FAILED;
+        if (c.parsedAconds === undefined) return FAILED;
+        if (c.parsedAconds.length === 0) return "（空）";
+        return acondsToString(c.parsedAconds);
       case "availability": {
         if (c.parsedAconds === undefined) return FAILED;
         const a = getAvailability(c.parsedAconds, year);
         switch (a) {
           case "available":
-            return "✅ 開講";
+            return "開講";
           case "unavailable":
-            return "❌ 非開講";
+            return "非開講";
           case "indeterminable":
-            return "❓ 不明";
+            return "不明";
           default:
             unreachable(a);
         }
       }
-      case "slots":
-        return c.parsedSlots !== undefined
-          ? c.parsedSlots.map(slotToString).join(", ")
-          : FAILED;
       case "syllabusStatus": {
         if (syllabus === undefined) return NO_DATA;
         if (syllabus.noSet.has(c.id)) return "シラバスなし";
-        if (syllabus.badSet.has(c.id)) return "解析失敗";
+        if (syllabus.badSet.has(c.id)) return "パース失敗";
         if (syllabus.courseMap.has(c.id)) return "あり";
         return "不明";
       }
@@ -198,6 +197,8 @@
 
   let courses = $state.raw<Course[] | undefined>();
   let loading = $state(false);
+  let loadedXlsxName = $state<string | undefined>();
+  let loadedJsonName = $state<string | undefined>();
   let showRaw = $state(false);
   let filterIdPrefix = $state("");
   let filterNameQuery = $state("");
@@ -205,6 +206,52 @@
   let syllabusData = $state.raw<SyllabusData | undefined>(undefined);
   type Tab = "inspect" | "fix";
   let activeTab = $state<Tab>("inspect");
+
+  // ── Issues ─────────────────────────────────────────────────────────────────
+
+  type Issue =
+    | "id-parse-fail"
+    | "credit-parse-fail"
+    | "expects-parse-fail"
+    | "term-parse-fail"
+    | "when-parse-fail"
+    | "aconds-parse-fail"
+    | "available-but-no-term"
+    | "available-but-no-when";
+
+  const ISSUE_LABELS: Record<Issue, string> = {
+    "id-parse-fail": "科目番号パース失敗",
+    "credit-parse-fail": "単位数パース失敗",
+    "expects-parse-fail": "標準履修年次パース失敗",
+    "term-parse-fail": "実施学期パース失敗",
+    "when-parse-fail": "曜時限パース失敗",
+    "aconds-parse-fail": "開講状況パース失敗",
+    "available-but-no-term": "今年度開講・実施学期なし",
+    "available-but-no-when": "今年度開講・曜時限なし",
+  };
+
+  function getCourseIssues(c: Course, y: number): Issue[] {
+    const issues: Issue[] = [];
+    if (c.parsedId === undefined) issues.push("id-parse-fail");
+    if (c.parsedCredit === undefined) issues.push("credit-parse-fail");
+    if (c.parsedExpects === undefined) issues.push("expects-parse-fail");
+    if (c.parsedTermSets === undefined) issues.push("term-parse-fail");
+    if (c.parsedWhenSets === undefined) issues.push("when-parse-fail");
+    if (c.parsedAconds === undefined) issues.push("aconds-parse-fail");
+    if (c.parsedAconds !== undefined && getAvailability(c.parsedAconds, y) === "available") {
+      if (c.parsedTermSets !== undefined && c.parsedTermSets.length === 0) issues.push("available-but-no-term");
+      if (c.parsedWhenSets !== undefined && c.parsedWhenSets.length === 0) issues.push("available-but-no-when");
+    }
+    return issues;
+  }
+
+  const courseIssues = $derived.by(() => {
+    if (courses === undefined) return [];
+    return courses
+      .map((c) => ({ course: c, issues: getCourseIssues(c, year) }))
+      .filter(({ issues }) => issues.length > 0);
+  });
+
   const COL_LABELS: Record<ColumnKey, string> = {
     id: "科目番号",
     credit: "単位数",
@@ -213,7 +260,6 @@
     whenSets: "曜時限",
     aconds: "開講状況",
     availability: "今年度開講",
-    slots: "実施学期＋曜時限",
     syllabusStatus: "シラバス状況",
   };
 
@@ -310,7 +356,7 @@
 
   const displayedCourses = $derived(visibleCourses?.slice(0, rowLimit));
 
-  async function loadFile(bytes: ArrayBuffer): Promise<void> {
+  async function loadFile(bytes: ArrayBuffer, name: string): Promise<void> {
     loading = true;
     const w = new exceljs.Workbook();
     await w.xlsx.load(bytes);
@@ -323,30 +369,27 @@
     }
     courses = cs;
     hiddenColumnValues = new Map();
+    loadedXlsxName = name;
     loading = false;
   }
 
   async function handleFileInput(input: HTMLInputElement): Promise<void> {
     assert(input.files !== null);
-    if (input.files.length === 0) {
-      return;
-    }
-    const bytes = await input.files[0].bytes();
-    await loadFile(bytes.buffer);
+    if (input.files.length === 0) return;
+    const file = input.files[0];
+    await loadFile(await file.bytes().then((b) => b.buffer), file.name);
   }
 
-  async function loadFromBase64(base64: string): Promise<void> {
+  async function loadFromBase64(base64: string, name: string): Promise<void> {
     const bytesString = window.atob(base64);
     const bytes = new Uint8Array(bytesString.length);
     for (let i = 0; i < bytesString.length; i++) {
       bytes[i] = bytesString[i].charCodeAt(0);
     }
-    await loadFile(bytes.buffer);
+    await loadFile(bytes.buffer, name);
   }
 
-  async function handleJsonInput(input: HTMLInputElement): Promise<void> {
-    if (input.files === null || input.files.length === 0) return;
-    const text = await input.files[0].text();
+  function loadJsonText(text: string, name: string): void {
     let json: unknown;
     try {
       json = JSON.parse(text);
@@ -360,6 +403,13 @@
       return;
     }
     syllabusData = result.data;
+    loadedJsonName = name;
+  }
+
+  async function handleJsonInput(input: HTMLInputElement): Promise<void> {
+    if (input.files === null || input.files.length === 0) return;
+    const file = input.files[0];
+    loadJsonText(await file.text(), file.name);
   }
 
   function handleCopyOutput(): void {
@@ -430,27 +480,50 @@ ${elements}] as KnownCourse[];`;
   <aside class="sidebar">
     <section>
       <span class="section-label">ファイル</span>
-      <label class="col">
-        科目一覧
-        <input type="file" accept=".xlsx" oninput={(e) => handleFileInput(e.currentTarget)} />
-      </label>
-      <label class="col">
-        シラバスJSON
-        <input type="file" accept=".json" oninput={(e) => handleJsonInput(e.currentTarget)} />
-      </label>
-      <label>
+      <div class="file-row">
+        <span class="file-label">科目一覧</span>
+        <label class="file-pick-btn">
+          選択
+          <input type="file" accept=".xlsx" oninput={(e) => handleFileInput(e.currentTarget)} />
+        </label>
+        {#if loadedXlsxName !== undefined}
+          <span class="file-loaded">{loadedXlsxName}</span>
+        {:else}
+          <span class="file-none">未読み込み</span>
+        {/if}
+      </div>
+      {#if dev}
+        <div class="test-files">
+          {#each Object.entries(testFiles) as [path, base64]}
+            {@const name = path.split("/").pop()!}
+            <button onclick={() => loadFromBase64(base64, name)}>{name}</button>
+          {/each}
+        </div>
+      {/if}
+      <label class="inline-check">
         <input type="checkbox" bind:checked={ignoreGraduateCourses} />
         院の科目を除く
       </label>
       {#if loading}
         <span class="loading">読み込み中…</span>
       {/if}
+      <div class="file-row">
+        <span class="file-label">シラバスJSON</span>
+        <label class="file-pick-btn">
+          選択
+          <input type="file" accept=".json" oninput={(e) => handleJsonInput(e.currentTarget)} />
+        </label>
+        {#if loadedJsonName !== undefined}
+          <span class="file-loaded">{loadedJsonName}</span>
+        {:else}
+          <span class="file-none">未読み込み</span>
+        {/if}
+      </div>
       {#if dev}
         <div class="test-files">
-          {#each Object.entries(testFiles) as [path, base64]}
-            <button onclick={() => loadFromBase64(base64)}>
-              {path.split("/").pop()}
-            </button>
+          {#each Object.entries(testJsonFiles) as [path, text]}
+            {@const name = path.split("/").pop()!}
+            <button onclick={() => loadJsonText(text, name)}>{name}</button>
           {/each}
         </div>
       {/if}
@@ -584,14 +657,6 @@ ${elements}] as KnownCourse[];`;
             >▾</button>
           </th>
           <th>
-            実施学期＋曜時限
-            <button
-              class="filter-btn"
-              class:active={hasFilter("slots")}
-              onclick={() => (openFilterColumn = "slots")}
-            >▾</button>
-          </th>
-          <th>
             シラバス状況
             <button
               class="filter-btn"
@@ -614,14 +679,13 @@ ${elements}] as KnownCourse[];`;
             <td></td>
             <td></td>
             <td></td>
-            <td></td>
           </tr>
           <tr class="parsed">
             <td>
               {#if c.parsedId !== undefined}
                 {c.parsedId}
               {:else}
-                <div class="cross">❌</div>
+                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
               {/if}
             </td>
             <td>
@@ -634,13 +698,17 @@ ${elements}] as KnownCourse[];`;
               </a>
             </td>
             <td>
-              {#if c.parsedCredit !== undefined}{c.parsedCredit}{:else}<div class="cross">❌</div>{/if}
+              {#if c.parsedCredit !== undefined}{c.parsedCredit}{:else}<span class="st-fail"><TriangleAlert size={13} />パース失敗</span>{/if}
             </td>
             <td>
-              {#if c.parsedExpects !== undefined}{c.parsedExpects.join(", ")}{:else}<div class="cross">❌</div>{/if}
+              {#if c.parsedExpects !== undefined}{c.parsedExpects.join(", ")}{:else}<span class="st-fail"><TriangleAlert size={13} />パース失敗</span>{/if}
             </td>
             <td>
-              {#if c.parsedTermSets !== undefined}
+              {#if c.parsedTermSets === undefined}
+                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+              {:else if c.parsedTermSets.length === 0}
+                <span class="st-empty"><Minus size={13} />（空）</span>
+              {:else}
                 <ul class="term-set">
                   {#each c.parsedTermSets as set}
                     <li>
@@ -652,12 +720,14 @@ ${elements}] as KnownCourse[];`;
                     </li>
                   {/each}
                 </ul>
-              {:else}
-                <div class="cross">❌</div>
               {/if}
             </td>
             <td>
-              {#if c.parsedWhenSets !== undefined}
+              {#if c.parsedWhenSets === undefined}
+                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+              {:else if c.parsedWhenSets.length === 0}
+                <span class="st-empty"><Minus size={13} />（空）</span>
+              {:else}
                 <ul class="when-set">
                   {#each c.parsedWhenSets as set}
                     <li>
@@ -669,41 +739,32 @@ ${elements}] as KnownCourse[];`;
                     </li>
                   {/each}
                 </ul>
-              {:else}
-                <div class="cross">❌</div>
               {/if}
             </td>
             <td>
               <span class="remark">{c.remark}</span>
             </td>
             <td>
-              {#if c.parsedAconds !== undefined}
-                {acondsToString(c.parsedAconds)}
+              {#if c.parsedAconds === undefined}
+                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+              {:else if c.parsedAconds.length === 0}
+                <span class="st-empty"><Minus size={13} />（空）</span>
               {:else}
-                <div class="cross">❌</div>
+                {acondsToString(c.parsedAconds)}
               {/if}
             </td>
             <td>
               {#if c.parsedAconds !== undefined}
                 {@const available = getAvailability(c.parsedAconds, year)}
                 {#if available === "available"}
-                  ✅
+                  <span class="st-avail"><CircleCheck size={13} />開講</span>
                 {:else if available === "unavailable"}
-                  ❌
+                  <span class="st-unavail"><CircleX size={13} />非開講</span>
                 {:else}
-                  ❓
+                  <span class="st-unknown"><CircleQuestionMark size={13} />不明</span>
                 {/if}
               {:else}
-                <div class="cross">❌</div>
-              {/if}
-            </td>
-            <td>
-              {#if c.parsedSlots !== undefined}
-                <ul class="slot">
-                  {#each c.parsedSlots as s}<li>{slotToString(s)}</li>{/each}
-                </ul>
-              {:else}
-                <div class="cross">❌</div>
+                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
               {/if}
             </td>
             <td>
@@ -712,7 +773,7 @@ ${elements}] as KnownCourse[];`;
               {:else if syllabusLookup.noSet.has(c.id)}
                 シラバスなし
               {:else if syllabusLookup.badSet.has(c.id)}
-                解析失敗
+                パース失敗
               {:else if syllabusLookup.courseMap.has(c.id)}
                 あり
               {:else}
@@ -726,7 +787,35 @@ ${elements}] as KnownCourse[];`;
   </main>
 
   {#if activeTab === "fix"}
-    <div class="fix-placeholder">（準備中）</div>
+    <div class="fix-panel">
+      {#if courses === undefined}
+        <p class="fix-empty">科目一覧を読み込んでください</p>
+      {:else if courseIssues.length === 0}
+        <p class="fix-empty">問題のある科目はありません</p>
+      {:else}
+        <p class="fix-count">{courseIssues.length} 件</p>
+        <ul class="issue-list">
+          {#each courseIssues as { course, issues }}
+            <li class="issue-item">
+              <div class="issue-course">
+                <span class="issue-id">{course.parsedId ?? course.id}</span>
+                <a
+                  class="issue-name"
+                  href={createSyllabusUrl(year.toString(), course.id)}
+                  target="_blank"
+                  rel="noreferrer"
+                >{course.name}</a>
+              </div>
+              <ul class="issue-tags">
+                {#each issues as issue}
+                  <li class="issue-tag" data-kind={issue}>{ISSUE_LABELS[issue]}</li>
+                {/each}
+              </ul>
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </div>
   {/if}
 
   <dialog
@@ -907,6 +996,59 @@ ${elements}] as KnownCourse[];`;
       animation: pulse 1.4s ease-in-out infinite;
     }
 
+    .file-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .file-label {
+      font-size: 0.85rem;
+      color: oklch(35% 0 0);
+      white-space: nowrap;
+    }
+
+    .file-pick-btn {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 10px;
+      font-size: 0.8rem;
+      border: 1px solid oklch(70% 0 0);
+      border-radius: 4px;
+      background: oklch(97% 0 0);
+      cursor: pointer;
+      white-space: nowrap;
+      flex-shrink: 0;
+
+      input[type="file"] {
+        display: none;
+      }
+
+      &:hover {
+        background: oklch(93% 0 0);
+      }
+    }
+
+    .file-loaded {
+      font-size: 0.78rem;
+      color: oklch(40% 0.1 145);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      max-width: 100%;
+    }
+
+    .file-none {
+      font-size: 0.78rem;
+      color: oklch(68% 0 0);
+    }
+
+    .inline-check {
+      font-size: 0.8rem !important;
+      color: oklch(50% 0 0);
+    }
+
     .test-files {
       display: flex;
       flex-wrap: wrap;
@@ -945,13 +1087,89 @@ ${elements}] as KnownCourse[];`;
     }
   }
 
-  .fix-placeholder {
+  .fix-panel {
     grid-row: 2;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+    overflow-y: auto;
+    padding: 20px 24px;
+  }
+
+  .fix-empty {
     color: oklch(60% 0 0);
-    font-size: 1rem;
+    font-size: 0.9rem;
+    margin: 0;
+  }
+
+  .fix-count {
+    font-size: 0.8rem;
+    color: oklch(55% 0 0);
+    margin: 0 0 12px;
+  }
+
+  .issue-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .issue-item {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 12px;
+    border: 1px solid oklch(88% 0 0);
+    border-radius: 6px;
+    background: white;
+  }
+
+  .issue-course {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+  }
+
+  .issue-id {
+    font-size: 0.78rem;
+    font-family: monospace;
+    color: oklch(50% 0 0);
+    flex-shrink: 0;
+  }
+
+  .issue-name {
+    font-size: 0.88rem;
+    color: oklch(25% 0 0);
+    text-decoration: none;
+
+    &:hover {
+      text-decoration: underline;
+    }
+  }
+
+  .issue-tags {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+
+  .issue-tag {
+    font-size: 0.72rem;
+    padding: 1px 7px;
+    border-radius: 3px;
+    background: oklch(94% 0.04 25);
+    border: 1px solid oklch(82% 0.08 25);
+    color: oklch(38% 0.1 25);
+
+    &[data-kind="available-but-no-term"],
+    &[data-kind="available-but-no-when"] {
+      background: oklch(94% 0.05 60);
+      border-color: oklch(82% 0.1 60);
+      color: oklch(38% 0.12 60);
+    }
   }
 
   table.courses {
@@ -1002,11 +1220,6 @@ ${elements}] as KnownCourse[];`;
     } // 今年度開講
     th:nth-child(10),
     td:nth-child(10) {
-      width: 160px;
-      white-space: normal;
-    } // 実施学期＋曜時限
-    th:nth-child(11),
-    td:nth-child(11) {
       width: 90px;
     } // シラバス状況
   }
@@ -1068,13 +1281,27 @@ ${elements}] as KnownCourse[];`;
     color: inherit;
   }
 
-  .cross {
-    text-align: center;
-  }
-
   .no-data {
     color: oklch(72% 0 0);
   }
+
+  .st-fail,
+  .st-empty,
+  .st-avail,
+  .st-unavail,
+  .st-unknown {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.8rem;
+    white-space: nowrap;
+  }
+
+  .st-fail    { color: oklch(48% 0.14 25); }
+  .st-empty   { color: oklch(58% 0 0); }
+  .st-avail   { color: oklch(42% 0.14 145); }
+  .st-unavail { color: oklch(48% 0.14 25); }
+  .st-unknown { color: oklch(52% 0.1 60); }
 
   .filter-btn {
     margin-left: 4px;
@@ -1178,8 +1405,7 @@ ${elements}] as KnownCourse[];`;
   }
 
   ul.term,
-  ul.when,
-  ul.slot {
+  ul.when {
     list-style: none;
     margin: 0;
     padding: 0;
@@ -1210,11 +1436,6 @@ ${elements}] as KnownCourse[];`;
     &.when > li {
       background-color: oklch($l $c 120);
       border: 1px solid oklch($bl $bc 120);
-    }
-
-    &.slot > li {
-      background-color: oklch($l $c 240);
-      border: 1px solid oklch($bl $bc 240);
     }
   }
 

@@ -210,6 +210,7 @@ function parseTermSet(s: string): TermSet | undefined {
 }
 
 function parseTermSets(s: string): TermSet[] | undefined {
+  if (s.trim() === "") return [];
   const sets: TermSet[] = [];
   for (const chunk of s.split("\n")) {
     const set = parseTermSet(chunk.trim());
@@ -451,6 +452,7 @@ function parseWhenSet(s: string): WhenSet | undefined {
 }
 
 function parseWhenSets(s: string): WhenSet[] | undefined {
+  if (s.trim() === "") return [];
   const sets: WhenSet[] = [];
   for (const chunk of s.split("\n")) {
     const set = parseWhenSet(chunk.trim());
