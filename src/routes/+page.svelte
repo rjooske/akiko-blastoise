@@ -6,13 +6,18 @@
     getAvailability,
     type Acond,
     type Course,
-    type CourseId,
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
   import { assert, unreachable } from "$lib/util";
   import * as exceljs from "exceljs";
   import { z } from "zod";
-  import { CircleCheck, CircleX, CircleQuestionMark, TriangleAlert, Minus } from "lucide-svelte";
+  import {
+    CircleCheck,
+    CircleX,
+    CircleQuestionMark,
+    TriangleAlert,
+    Minus,
+  } from "lucide-svelte";
 
   const FAILED = "(パース失敗)";
   const NO_DATA = "(データなし)";
@@ -20,15 +25,27 @@
   // ── Syllabus JSON schema ───────────────────────────────────────────────────
 
   const TermSchema = z.enum([
-    "spring-a", "spring-b", "spring-c",
-    "autumn-a", "autumn-b", "autumn-c",
-    "spring", "autumn", "spring-break", "summer-break", "all-year",
+    "spring-a",
+    "spring-b",
+    "spring-c",
+    "autumn-a",
+    "autumn-b",
+    "autumn-c",
+    "spring",
+    "autumn",
+    "spring-break",
+    "summer-break",
+    "all-year",
   ]);
 
   const DowSchema = z.enum(["mon", "tue", "wed", "thu", "fri", "sat"]);
 
   const WhenSchema = z.discriminatedUnion("kind", [
-    z.object({ kind: z.literal("regular"), dow: DowSchema, period: z.number() }),
+    z.object({
+      kind: z.literal("regular"),
+      dow: DowSchema,
+      period: z.number(),
+    }),
     z.object({ kind: z.literal("intensive") }),
     z.object({ kind: z.literal("zuiji") }),
     z.object({ kind: z.literal("oudan") }),
@@ -159,11 +176,15 @@
       case "termSets":
         if (c.parsedTermSets === undefined) return FAILED;
         if (c.parsedTermSets.length === 0) return "（空）";
-        return c.parsedTermSets.map((s) => s.map(termToString).join(" ")).join(" / ");
+        return c.parsedTermSets
+          .map((s) => s.map(termToString).join(" "))
+          .join(" / ");
       case "whenSets":
         if (c.parsedWhenSets === undefined) return FAILED;
         if (c.parsedWhenSets.length === 0) return "（空）";
-        return c.parsedWhenSets.map((s) => s.map(whenToString).join(" ")).join(" / ");
+        return c.parsedWhenSets
+          .map((s) => s.map(whenToString).join(" "))
+          .join(" / ");
       case "aconds":
         if (c.parsedAconds === undefined) return FAILED;
         if (c.parsedAconds.length === 0) return "（空）";
@@ -239,11 +260,20 @@
     if (c.parsedTermSets === undefined) issues.push("term-parse-fail");
     if (c.parsedWhenSets === undefined) issues.push("when-parse-fail");
     if (c.parsedAconds === undefined) issues.push("aconds-parse-fail");
-    if (c.parsedTermSets !== undefined && c.parsedWhenSets !== undefined && c.parsedSlots === undefined)
+    if (
+      c.parsedTermSets !== undefined &&
+      c.parsedWhenSets !== undefined &&
+      c.parsedSlots === undefined
+    )
       issues.push("slots-indeterminable");
-    if (c.parsedAconds !== undefined && getAvailability(c.parsedAconds, y) === "available") {
-      if (c.parsedTermSets !== undefined && c.parsedTermSets.length === 0) issues.push("available-but-no-term");
-      if (c.parsedWhenSets !== undefined && c.parsedWhenSets.length === 0) issues.push("available-but-no-when");
+    if (
+      c.parsedAconds !== undefined &&
+      getAvailability(c.parsedAconds, y) === "available"
+    ) {
+      if (c.parsedTermSets !== undefined && c.parsedTermSets.length === 0)
+        issues.push("available-but-no-term");
+      if (c.parsedWhenSets !== undefined && c.parsedWhenSets.length === 0)
+        issues.push("available-but-no-when");
     }
     return issues;
   }
@@ -311,7 +341,9 @@
   }
 
   function uncheckAllVisibility() {
-    hiddenColumnValues = new Map(ALL_COLS.map((col) => [col, new Set(columnValues(col))]));
+    hiddenColumnValues = new Map(
+      ALL_COLS.map((col) => [col, new Set(columnValues(col))]),
+    );
   }
 
   function hasFilter(col: ColumnKey): boolean {
@@ -333,7 +365,10 @@
   }
 
   function uncheckAllColumn(col: ColumnKey): void {
-    hiddenColumnValues = new Map(hiddenColumnValues).set(col, new Set(columnValues(col)));
+    hiddenColumnValues = new Map(hiddenColumnValues).set(
+      col,
+      new Set(columnValues(col)),
+    );
   }
 
   let rowLimit = $state(100);
@@ -350,7 +385,10 @@
       if (idPrefix && !c.id.toLowerCase().startsWith(idPrefix)) return false;
       if (nameQuery && !c.name.toLowerCase().includes(nameQuery)) return false;
       for (const [col, hidden] of hiddenColumnValues) {
-        if (hidden.size > 0 && hidden.has(courseColumnValue(c, col, year, syllabusLookup)))
+        if (
+          hidden.size > 0 &&
+          hidden.has(courseColumnValue(c, col, year, syllabusLookup))
+        )
           return false;
       }
       return true;
@@ -416,13 +454,40 @@
   }
 
   function handleCopyOutput(): void {
-    if (courses === undefined) {
+    if (courses === undefined) return;
+
+    const SLOT_ISSUE_KINDS = new Set<Issue>([
+      "slots-indeterminable",
+      "available-but-no-term",
+      "available-but-no-when",
+    ]);
+
+    // Pre-compute per-course slot resolution
+    const resolved = courses.map((course) => {
+      const issues = getCourseIssues(course, year);
+      const hasSlotIssue = issues.some((i) => SLOT_ISSUE_KINDS.has(i));
+      const syllabusSlots = hasSlotIssue
+        ? syllabusLookup?.courseMap.get(course.id)?.slots
+        : undefined;
+      return { course, hasSlotIssue, syllabusSlots };
+    });
+
+    // Abort if any slot issue cannot be fixed from syllabus
+    const unresolvable = resolved
+      .filter(
+        ({ hasSlotIssue, syllabusSlots }) =>
+          hasSlotIssue && !syllabusSlots?.length,
+      )
+      .map(({ course }) => course.parsedId ?? course.id);
+    if (unresolvable.length > 0) {
+      window.alert(
+        `以下の科目のスロットがシラバスにもありません\n${unresolvable.join("\n")}`,
+      );
       return;
     }
+
     let elements = "";
-    const coursesWithoutSlots: CourseId[] = [];
-    for (let i = 0; i < courses.length; i++) {
-      const course = courses[i];
+    for (const { course, hasSlotIssue, syllabusSlots } of resolved) {
       if (
         !(
           course.parsedId !== undefined &&
@@ -434,10 +499,7 @@
         window.alert("TODO");
         return;
       }
-      const slots = course.parsedSlots ?? [];
-      if (slots.length === 0) {
-        coursesWithoutSlots.push(course.parsedId);
-      }
+      const slots = hasSlotIssue ? syllabusSlots! : (course.parsedSlots ?? []);
       elements +=
         JSON.stringify({
           id: course.parsedId,
@@ -450,9 +512,6 @@
           availability: getAvailability(course.parsedAconds, year),
         }) + ",\n";
     }
-    window.alert(
-      `以下の科目の実施学期＋曜時限がありません\n${coursesWithoutSlots.join("\n")}`,
-    );
     const output = `// @ts-nocheck
 import type { KnownCourse } from "$lib/akiko";
 export const knownCourseYear = ${year};
@@ -467,7 +526,6 @@ ${elements}] as KnownCourse[];`;
   }
 </script>
 
-
 <div class="page">
   <header>
     <h1>
@@ -475,8 +533,18 @@ ${elements}] as KnownCourse[];`;
       <span>あきこカメックス</span>
     </h1>
     <nav class="tabs">
-      <button class:active={activeTab === "inspect"} onclick={() => (activeTab = "inspect")}>一覧</button>
-      <button class:active={activeTab === "fix"} onclick={() => (activeTab = "fix")}>修正</button>
+      <button
+        class:active={activeTab === "inspect"}
+        onclick={() => (activeTab = "inspect")}
+      >
+        一覧
+      </button>
+      <button
+        class:active={activeTab === "fix"}
+        onclick={() => (activeTab = "fix")}
+      >
+        修正
+      </button>
     </nav>
   </header>
 
@@ -487,7 +555,11 @@ ${elements}] as KnownCourse[];`;
         <span class="file-label">科目一覧</span>
         <label class="file-pick-btn">
           選択
-          <input type="file" accept=".xlsx" oninput={(e) => handleFileInput(e.currentTarget)} />
+          <input
+            type="file"
+            accept=".xlsx"
+            oninput={(e) => handleFileInput(e.currentTarget)}
+          />
         </label>
         {#if loadedXlsxName !== undefined}
           <span class="file-loaded">{loadedXlsxName}</span>
@@ -514,7 +586,11 @@ ${elements}] as KnownCourse[];`;
         <span class="file-label">シラバスJSON</span>
         <label class="file-pick-btn">
           選択
-          <input type="file" accept=".json" oninput={(e) => handleJsonInput(e.currentTarget)} />
+          <input
+            type="file"
+            accept=".json"
+            oninput={(e) => handleJsonInput(e.currentTarget)}
+          />
         </label>
         {#if loadedJsonName !== undefined}
           <span class="file-loaded">{loadedJsonName}</span>
@@ -607,7 +683,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("id")}
               onclick={() => (openFilterColumn = "id")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
           <th>科目名</th>
           <th>
@@ -616,7 +694,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("credit")}
               onclick={() => (openFilterColumn = "credit")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
           <th>
             標準履修年次
@@ -624,7 +704,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("expects")}
               onclick={() => (openFilterColumn = "expects")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
           <th>
             実施学期
@@ -632,7 +714,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("termSets")}
               onclick={() => (openFilterColumn = "termSets")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
           <th>
             曜時限
@@ -640,7 +724,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("whenSets")}
               onclick={() => (openFilterColumn = "whenSets")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
           <th>備考</th>
           <th>
@@ -649,7 +735,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("aconds")}
               onclick={() => (openFilterColumn = "aconds")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
           <th>
             今年度開講
@@ -657,7 +745,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("availability")}
               onclick={() => (openFilterColumn = "availability")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
           <th>
             シラバス状況
@@ -665,7 +755,9 @@ ${elements}] as KnownCourse[];`;
               class="filter-btn"
               class:active={hasFilter("syllabusStatus")}
               onclick={() => (openFilterColumn = "syllabusStatus")}
-            >▾</button>
+            >
+              ▾
+            </button>
           </th>
         </tr>
       </thead>
@@ -688,7 +780,9 @@ ${elements}] as KnownCourse[];`;
               {#if c.parsedId !== undefined}
                 {c.parsedId}
               {:else}
-                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+                <span class="st-fail">
+                  <TriangleAlert size={13} />パース失敗
+                </span>
               {/if}
             </td>
             <td>
@@ -701,14 +795,24 @@ ${elements}] as KnownCourse[];`;
               </a>
             </td>
             <td>
-              {#if c.parsedCredit !== undefined}{c.parsedCredit}{:else}<span class="st-fail"><TriangleAlert size={13} />パース失敗</span>{/if}
+              {#if c.parsedCredit !== undefined}{c.parsedCredit}{:else}<span
+                  class="st-fail"
+                >
+                  <TriangleAlert size={13} />パース失敗
+                </span>{/if}
             </td>
             <td>
-              {#if c.parsedExpects !== undefined}{c.parsedExpects.join(", ")}{:else}<span class="st-fail"><TriangleAlert size={13} />パース失敗</span>{/if}
+              {#if c.parsedExpects !== undefined}{c.parsedExpects.join(
+                  ", ",
+                )}{:else}<span class="st-fail">
+                  <TriangleAlert size={13} />パース失敗
+                </span>{/if}
             </td>
             <td>
               {#if c.parsedTermSets === undefined}
-                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+                <span class="st-fail">
+                  <TriangleAlert size={13} />パース失敗
+                </span>
               {:else if c.parsedTermSets.length === 0}
                 <span class="st-empty"><Minus size={13} />（空）</span>
               {:else}
@@ -727,7 +831,9 @@ ${elements}] as KnownCourse[];`;
             </td>
             <td>
               {#if c.parsedWhenSets === undefined}
-                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+                <span class="st-fail">
+                  <TriangleAlert size={13} />パース失敗
+                </span>
               {:else if c.parsedWhenSets.length === 0}
                 <span class="st-empty"><Minus size={13} />（空）</span>
               {:else}
@@ -749,7 +855,9 @@ ${elements}] as KnownCourse[];`;
             </td>
             <td>
               {#if c.parsedAconds === undefined}
-                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+                <span class="st-fail">
+                  <TriangleAlert size={13} />パース失敗
+                </span>
               {:else if c.parsedAconds.length === 0}
                 <span class="st-empty"><Minus size={13} />（空）</span>
               {:else}
@@ -764,10 +872,14 @@ ${elements}] as KnownCourse[];`;
                 {:else if available === "unavailable"}
                   <span class="st-unavail"><CircleX size={13} />非開講</span>
                 {:else}
-                  <span class="st-unknown"><CircleQuestionMark size={13} />不明</span>
+                  <span class="st-unknown">
+                    <CircleQuestionMark size={13} />不明
+                  </span>
                 {/if}
               {:else}
-                <span class="st-fail"><TriangleAlert size={13} />パース失敗</span>
+                <span class="st-fail">
+                  <TriangleAlert size={13} />パース失敗
+                </span>
               {/if}
             </td>
             <td>
@@ -807,11 +919,15 @@ ${elements}] as KnownCourse[];`;
                   href={createSyllabusUrl(year.toString(), course.id)}
                   target="_blank"
                   rel="noreferrer"
-                >{course.name}</a>
+                >
+                  {course.name}
+                </a>
               </div>
               <ul class="issue-tags">
                 {#each issues as issue}
-                  <li class="issue-tag" data-kind={issue}>{ISSUE_LABELS[issue]}</li>
+                  <li class="issue-tag" data-kind={issue}>
+                    {ISSUE_LABELS[issue]}
+                  </li>
                 {/each}
               </ul>
             </li>
@@ -834,8 +950,12 @@ ${elements}] as KnownCourse[];`;
         <button onclick={() => (openFilterColumn = undefined)}>✕</button>
       </div>
       <div class="filter-dialog-actions">
-        <button onclick={() => checkAllColumn(openFilterColumn!)}>全てチェック</button>
-        <button onclick={() => uncheckAllColumn(openFilterColumn!)}>全て外す</button>
+        <button onclick={() => checkAllColumn(openFilterColumn!)}>
+          全てチェック
+        </button>
+        <button onclick={() => uncheckAllColumn(openFilterColumn!)}>
+          全て外す
+        </button>
       </div>
       <div class="filter-dialog-list">
         {#each openColumnValues as value}
@@ -1300,11 +1420,21 @@ ${elements}] as KnownCourse[];`;
     white-space: nowrap;
   }
 
-  .st-fail    { color: oklch(48% 0.14 25); }
-  .st-empty   { color: oklch(58% 0 0); }
-  .st-avail   { color: oklch(42% 0.14 145); }
-  .st-unavail { color: oklch(48% 0.14 25); }
-  .st-unknown { color: oklch(52% 0.1 60); }
+  .st-fail {
+    color: oklch(48% 0.14 25);
+  }
+  .st-empty {
+    color: oklch(58% 0 0);
+  }
+  .st-avail {
+    color: oklch(42% 0.14 145);
+  }
+  .st-unavail {
+    color: oklch(48% 0.14 25);
+  }
+  .st-unknown {
+    color: oklch(52% 0.1 60);
+  }
 
   .filter-btn {
     margin-left: 4px;
@@ -1385,7 +1515,6 @@ ${elements}] as KnownCourse[];`;
       cursor: pointer;
     }
   }
-
 
   ul.term-set,
   ul.when-set {
