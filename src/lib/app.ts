@@ -351,3 +351,105 @@ export type Course = {
   parsedSlots: Slot[] | undefined;
   parsedAconds: Acond[] | undefined;
 };
+
+export type SyllabusCourse = {
+  id: string;
+  name: string;
+  credit: number;
+  expects: number[];
+  slots: Slot[];
+};
+
+export type SyllabusData = {
+  courses: SyllabusCourse[];
+  noSyllabus: string[];
+  badSyllabus: string[];
+};
+
+export type Issue =
+  | "id-parse-fail"
+  | "credit-parse-fail"
+  | "expects-parse-fail"
+  | "term-parse-fail"
+  | "when-parse-fail"
+  | "aconds-parse-fail"
+  | "available-but-no-term"
+  | "available-but-no-when"
+  | "slots-indeterminable";
+
+export function getCourseIssues(c: Course, y: number): Issue[] {
+  const issues: Issue[] = [];
+  if (c.parsedId === undefined) issues.push("id-parse-fail");
+  if (c.parsedCredit === undefined) issues.push("credit-parse-fail");
+  if (c.parsedExpects === undefined) issues.push("expects-parse-fail");
+  if (c.parsedTermSets === undefined) issues.push("term-parse-fail");
+  if (c.parsedWhenSets === undefined) issues.push("when-parse-fail");
+  if (c.parsedAconds === undefined) issues.push("aconds-parse-fail");
+  if (
+    c.parsedTermSets !== undefined &&
+    c.parsedWhenSets !== undefined &&
+    c.parsedSlots === undefined
+  )
+    issues.push("slots-indeterminable");
+  if (
+    c.parsedAconds !== undefined &&
+    getAvailability(c.parsedAconds, y) === "available"
+  ) {
+    if (c.parsedTermSets !== undefined && c.parsedTermSets.length === 0)
+      issues.push("available-but-no-term");
+    if (c.parsedWhenSets !== undefined && c.parsedWhenSets.length === 0)
+      issues.push("available-but-no-when");
+  }
+  return issues;
+}
+
+export function generateOutput(
+  courses: Course[],
+  year: number,
+  syllabusData: SyllabusData | undefined,
+): string | undefined {
+  const SLOT_ISSUE_KINDS = new Set<Issue>([
+    "slots-indeterminable",
+    "available-but-no-term",
+    "available-but-no-when",
+  ]);
+
+  let elements = "";
+  for (const course of courses) {
+    if (
+      !(
+        course.parsedId !== undefined &&
+        course.parsedCredit !== undefined &&
+        course.parsedExpects !== undefined &&
+        course.parsedAconds !== undefined
+      )
+    ) {
+      return undefined;
+    }
+    const issues = getCourseIssues(course, year);
+    const hasSlotIssue = issues.some((i) => SLOT_ISSUE_KINDS.has(i));
+    const syllabusSlots = hasSlotIssue
+      ? syllabusData?.courses.find((c) => c.id === course.id)?.slots
+      : undefined;
+    const slots =
+      hasSlotIssue && syllabusSlots?.length
+        ? syllabusSlots
+        : (course.parsedSlots ?? []);
+    elements +=
+      JSON.stringify({
+        id: course.parsedId,
+        name: course.name,
+        credit: course.parsedCredit,
+        expects: course.parsedExpects,
+        term: course.term,
+        when: course.when,
+        slots,
+        availability: getAvailability(course.parsedAconds, year),
+      }) + ",\n";
+  }
+  return `// @ts-nocheck
+import type { KnownCourse } from "$lib/akiko";
+export const knownCourseYear = ${year};
+export const knownCourses = [
+${elements}] as KnownCourse[];`;
+}

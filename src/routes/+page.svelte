@@ -4,8 +4,13 @@
     termToString,
     whenToString,
     getAvailability,
+    getCourseIssues,
+    generateOutput,
     type Acond,
     type Course,
+    type Issue,
+    type SyllabusCourse,
+    type SyllabusData,
   } from "$lib/app";
   import { parseCourses } from "$lib/input";
   import { assert, unreachable } from "$lib/util";
@@ -69,9 +74,6 @@
     noSyllabus: z.array(CourseIdSchema),
     badSyllabus: z.array(CourseIdSchema),
   });
-
-  type SyllabusCourse = z.infer<typeof SyllabusCourseSchema>;
-  type SyllabusData = z.infer<typeof SyllabusDataSchema>;
 
   type SyllabusLookup =
     | {
@@ -229,17 +231,6 @@
 
   // ── Issues ─────────────────────────────────────────────────────────────────
 
-  type Issue =
-    | "id-parse-fail"
-    | "credit-parse-fail"
-    | "expects-parse-fail"
-    | "term-parse-fail"
-    | "when-parse-fail"
-    | "aconds-parse-fail"
-    | "available-but-no-term"
-    | "available-but-no-when"
-    | "slots-indeterminable";
-
   const ISSUE_LABELS: Record<Issue, string> = {
     "id-parse-fail": "科目番号パース失敗",
     "credit-parse-fail": "単位数パース失敗",
@@ -251,32 +242,6 @@
     "available-but-no-when": "今年度開講・曜時限なし",
     "slots-indeterminable": "学期・曜時限の組み合わせ不明",
   };
-
-  function getCourseIssues(c: Course, y: number): Issue[] {
-    const issues: Issue[] = [];
-    if (c.parsedId === undefined) issues.push("id-parse-fail");
-    if (c.parsedCredit === undefined) issues.push("credit-parse-fail");
-    if (c.parsedExpects === undefined) issues.push("expects-parse-fail");
-    if (c.parsedTermSets === undefined) issues.push("term-parse-fail");
-    if (c.parsedWhenSets === undefined) issues.push("when-parse-fail");
-    if (c.parsedAconds === undefined) issues.push("aconds-parse-fail");
-    if (
-      c.parsedTermSets !== undefined &&
-      c.parsedWhenSets !== undefined &&
-      c.parsedSlots === undefined
-    )
-      issues.push("slots-indeterminable");
-    if (
-      c.parsedAconds !== undefined &&
-      getAvailability(c.parsedAconds, y) === "available"
-    ) {
-      if (c.parsedTermSets !== undefined && c.parsedTermSets.length === 0)
-        issues.push("available-but-no-term");
-      if (c.parsedWhenSets !== undefined && c.parsedWhenSets.length === 0)
-        issues.push("available-but-no-when");
-    }
-    return issues;
-  }
 
   const courseIssues = $derived.by(() => {
     if (courses === undefined) return [];
@@ -455,57 +420,11 @@
 
   function handleCopyOutput(): void {
     if (courses === undefined) return;
-
-    const SLOT_ISSUE_KINDS = new Set<Issue>([
-      "slots-indeterminable",
-      "available-but-no-term",
-      "available-but-no-when",
-    ]);
-
-    // Pre-compute per-course slot resolution
-    const resolved = courses.map((course) => {
-      const issues = getCourseIssues(course, year);
-      const hasSlotIssue = issues.some((i) => SLOT_ISSUE_KINDS.has(i));
-      const syllabusSlots = hasSlotIssue
-        ? syllabusLookup?.courseMap.get(course.id)?.slots
-        : undefined;
-      return { course, hasSlotIssue, syllabusSlots };
-    });
-
-    let elements = "";
-    for (const { course, hasSlotIssue, syllabusSlots } of resolved) {
-      if (
-        !(
-          course.parsedId !== undefined &&
-          course.parsedCredit !== undefined &&
-          course.parsedExpects !== undefined &&
-          course.parsedAconds !== undefined
-        )
-      ) {
-        window.alert("TODO");
-        return;
-      }
-      const slots =
-        hasSlotIssue && syllabusSlots?.length
-          ? syllabusSlots
-          : (course.parsedSlots ?? []);
-      elements +=
-        JSON.stringify({
-          id: course.parsedId,
-          name: course.name,
-          credit: course.parsedCredit,
-          expects: course.parsedExpects,
-          term: course.term,
-          when: course.when,
-          slots,
-          availability: getAvailability(course.parsedAconds, year),
-        }) + ",\n";
+    const output = generateOutput(courses, year, syllabusData);
+    if (output === undefined) {
+      window.alert("TODO");
+      return;
     }
-    const output = `// @ts-nocheck
-import type { KnownCourse } from "$lib/akiko";
-export const knownCourseYear = ${year};
-export const knownCourses = [
-${elements}] as KnownCourse[];`;
     window.navigator.clipboard.writeText(output);
   }
 
