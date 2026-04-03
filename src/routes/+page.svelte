@@ -472,20 +472,6 @@
       return { course, hasSlotIssue, syllabusSlots };
     });
 
-    // Abort if any slot issue cannot be fixed from syllabus
-    const unresolvable = resolved
-      .filter(
-        ({ hasSlotIssue, syllabusSlots }) =>
-          hasSlotIssue && !syllabusSlots?.length,
-      )
-      .map(({ course }) => course.parsedId ?? course.id);
-    if (unresolvable.length > 0) {
-      window.alert(
-        `以下の科目のスロットがシラバスにもありません\n${unresolvable.join("\n")}`,
-      );
-      return;
-    }
-
     let elements = "";
     for (const { course, hasSlotIssue, syllabusSlots } of resolved) {
       if (
@@ -499,7 +485,10 @@
         window.alert("TODO");
         return;
       }
-      const slots = hasSlotIssue ? syllabusSlots! : (course.parsedSlots ?? []);
+      const slots =
+        hasSlotIssue && syllabusSlots?.length
+          ? syllabusSlots
+          : (course.parsedSlots ?? []);
       elements +=
         JSON.stringify({
           id: course.parsedId,
