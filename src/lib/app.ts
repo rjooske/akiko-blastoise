@@ -7,14 +7,32 @@ export type Term =
   | "spring-a"
   | "spring-b"
   | "spring-c"
+  | "spring"
+  | "summer-break"
   | "autumn-a"
   | "autumn-b"
   | "autumn-c"
-  | "spring"
   | "autumn"
   | "spring-break"
-  | "summer-break"
   | "all-year";
+
+const TERM_ORDER: { [K in Term]: number } = {
+  "spring-a": 0,
+  "spring-b": 1,
+  "spring-c": 2,
+  spring: 3,
+  "summer-break": 4,
+  "autumn-a": 5,
+  "autumn-b": 6,
+  "autumn-c": 7,
+  autumn: 8,
+  "spring-break": 9,
+  "all-year": 10,
+};
+
+export function termCompare(a: Term, b: Term): number {
+  return TERM_ORDER[a] - TERM_ORDER[b];
+}
 
 export function termToString(t: Term): string {
   switch (t) {
@@ -46,6 +64,44 @@ export function termToString(t: Term): string {
 }
 
 export type Dow = "mon" | "tue" | "wed" | "thu" | "fri" | "sat";
+
+const DOW_ORDER: { [K in Dow]: number } = {
+  mon: 0,
+  tue: 1,
+  wed: 2,
+  thu: 3,
+  fri: 4,
+  sat: 5,
+};
+
+export function dowCompare(a: Dow, b: Dow): number {
+  return DOW_ORDER[a] - DOW_ORDER[b];
+}
+
+export function dowsCompare(a: Dow[], b: Dow[]): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const d = dowCompare(a[i], b[i]);
+    if (d !== 0) return d;
+  }
+  return a.length - b.length;
+}
+
+const WHEN_KIND_ORDER: { [K in When["kind"]]: number } = {
+  regular: 0,
+  intensive: 1,
+  zuiji: 2,
+  oudan: 3,
+  nt: 4,
+};
+
+export function whenCompare(a: When, b: When): number {
+  const kindDiff = WHEN_KIND_ORDER[a.kind] - WHEN_KIND_ORDER[b.kind];
+  if (kindDiff !== 0) return kindDiff;
+  if (a.kind === "regular" && b.kind === "regular") {
+    return dowCompare(a.dow, b.dow) || a.period - b.period;
+  }
+  return 0;
+}
 
 export function dowToString(d: Dow): string {
   switch (d) {
@@ -91,9 +147,40 @@ export function whenToString(w: When): string {
 }
 
 export type TermSet = Term[];
+
+export function termSetCompare(a: TermSet, b: TermSet): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const d = termCompare(a[i], b[i]);
+    if (d !== 0) return d;
+  }
+  return a.length - b.length;
+}
+
+export function termSetEqual(a: TermSet, b: TermSet): boolean {
+  return termSetCompare(a, b) === 0;
+}
+
 export type WhenSet = When[];
 
+export function whenSetCompare(a: WhenSet, b: WhenSet): number {
+  for (let i = 0; i < Math.min(a.length, b.length); i++) {
+    const d = whenCompare(a[i], b[i]);
+    if (d !== 0) return d;
+  }
+  return a.length - b.length;
+}
+
+export function whenSetEqual(a: WhenSet, b: WhenSet): boolean {
+  return whenSetCompare(a, b) === 0;
+}
+
 export type Slot = { term: Term; when: When };
+
+export function slotCompare(a: Slot, b: Slot): number {
+  const t = termCompare(a.term, b.term);
+  if (t !== 0) return t;
+  return whenCompare(a.when, b.when);
+}
 
 export function slotToString(s: Slot): string {
   return termToString(s.term) + " " + whenToString(s.when);
@@ -148,7 +235,9 @@ export function isExpectedYear(n: number): boolean {
   return Number.isInteger(n) && 1 <= n && n <= 6;
 }
 
-// Availability condition
+/**
+ * Availability condition
+ */
 export type Acond =
   | { kind: "unavailable-in"; year: number }
   | { kind: "odd-year-only" }
@@ -204,7 +293,7 @@ export function acondsCompare(a: Acond[], b: Acond[]): number {
 }
 
 export function acondsEqual(a: Acond[], b: Acond[]): boolean {
-  return a.length === b.length && a.every((x, i) => acondEqual(x, b[i]));
+  return acondsCompare(a, b) === 0;
 }
 
 export type Availability = "available" | "unavailable" | "indeterminable";
