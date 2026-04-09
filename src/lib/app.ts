@@ -403,6 +403,120 @@ export function getCourseIssues(c: Course, y: number): Issue[] {
   return issues;
 }
 
+function termsToString(terms: Term[]): string {
+  const set = new Set(terms);
+  const hasSpringA = set.has("spring-a");
+  const hasSpringB = set.has("spring-b");
+  const hasSpringC = set.has("spring-c");
+  const hasSpring = set.has("spring");
+  const hasSummerBreak = set.has("summer-break");
+  const hasAutumnA = set.has("autumn-a");
+  const hasAutumnB = set.has("autumn-b");
+  const hasAutumnC = set.has("autumn-c");
+  const hasAutumn = set.has("autumn");
+  const hasSpringBreak = set.has("spring-break");
+  const hasAllYear = set.has("all-year");
+  let res = "";
+  if (hasSpringA || hasSpringB || hasSpringC) {
+    res += "春";
+    if (hasSpringA) res += "A";
+    if (hasSpringB) res += "B";
+    if (hasSpringC) res += "C";
+  }
+  if (hasSpring) res += "春学期";
+  if (hasSummerBreak) res += "夏休み";
+  if (hasAutumnA || hasAutumnB || hasAutumnC) {
+    res += "秋";
+    if (hasAutumnA) res += "A";
+    if (hasAutumnB) res += "B";
+    if (hasAutumnC) res += "C";
+  }
+  if (hasAutumn) res += "秋学期";
+  if (hasSpringBreak) res += "春休み";
+  if (hasAllYear) res += "通年";
+  return res;
+}
+
+function periodsToString(periods: number[]): string {
+  if (periods.length === 0) return "";
+  const ranges: [number, number][] = [];
+  let start = periods[0];
+  let end = periods[0];
+  for (let i = 1; i < periods.length; i++) {
+    if (periods[i] === end + 1) {
+      end = periods[i];
+    } else {
+      ranges.push([start, end]);
+      start = periods[i];
+      end = periods[i];
+    }
+  }
+  ranges.push([start, end]);
+  return ranges
+    .map(([s, e]) =>
+      s === e ? `${s}` : e - s === 1 ? `${s},${e}` : `${s}-${e}`,
+    )
+    .join(",");
+}
+
+function whensToString(whens: When[]): string {
+  whens = whens.toSorted(whenCompare);
+  const regulars: { dow: Dow; periods: number[] }[] = [];
+  for (const w of whens) {
+    if (w.kind !== "regular") continue;
+    const last = regulars.at(-1);
+    if (last !== undefined && last.dow === w.dow) last.periods.push(w.period);
+    else regulars.push({ dow: w.dow, periods: [w.period] });
+  }
+  const periodsStrToDows = new Map<string, Dow[]>();
+  for (const { dow, periods } of regulars) {
+    const periodsStr = periodsToString(periods);
+    let dows = periodsStrToDows.get(periodsStr);
+    if (dows === undefined) periodsStrToDows.set(periodsStr, (dows = []));
+    dows.push(dow);
+  }
+  const dowSetsByPeriodsStr: [Dow[], string][] = [];
+  for (const [periodsStr, dows] of periodsStrToDows) {
+    dows.sort(dowCompare);
+    dowSetsByPeriodsStr.push([dows, periodsStr]);
+  }
+  dowSetsByPeriodsStr.sort(([a], [b]) => dowsCompare(a, b));
+  let res = "";
+  for (const [dows, periodsStr] of dowSetsByPeriodsStr) {
+    for (const d of dows) res += dowToString(d);
+    res += periodsStr;
+  }
+  for (const w of whens) {
+    if (w.kind !== "regular") res += whenToString(w);
+  }
+  return res;
+}
+
+export function slotsToString(slots: Slot[]): string {
+  const termToWhens = new Map<Term, When[]>();
+  for (const s of slots) {
+    let whens = termToWhens.get(s.term);
+    if (whens === undefined) termToWhens.set(s.term, (whens = []));
+    whens.push(s.when);
+  }
+  const whensStrToTerms = new Map<string, Term[]>();
+  for (const [term, whens] of termToWhens) {
+    const whensStr = whensToString(whens);
+    let terms = whensStrToTerms.get(whensStr);
+    if (terms === undefined) whensStrToTerms.set(whensStr, (terms = []));
+    terms.push(term);
+  }
+  const termSetsByWhenStr: [Term[], string][] = [];
+  for (const [whensStr, terms] of whensStrToTerms) {
+    terms.sort(termCompare);
+    termSetsByWhenStr.push([terms, whensStr]);
+  }
+  termSetsByWhenStr.sort(([a], [b]) => termSetCompare(a, b));
+  return termSetsByWhenStr
+    .map(([terms, whenStr]) => termsToString(terms) + whenStr)
+    .join(" ");
+}
+
 export function generateOutput(
   courses: Course[],
   year: number,
@@ -441,10 +555,10 @@ export function generateOutput(
         name: course.name,
         credit: course.parsedCredit,
         expects: course.parsedExpects,
-        term: course.term,
-        when: course.when,
         slots,
+        slotsString: slotsToString(slots),
         availability: getAvailability(course.parsedAconds, year),
+        remark: course.remark,
       }) + ",\n";
   }
   return `// @ts-nocheck
