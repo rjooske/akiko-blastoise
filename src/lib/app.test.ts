@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
-import { slotsToString, type Dow, type Slot } from "./app";
+import { expectsToString, slotsToString, type Dow, type Slot } from "./app";
 
 function reg(dow: Dow, period: number): Slot["when"] {
   return { kind: "regular", dow, period };
 }
+
+describe("expectsToString", () => {
+  it("single", () => expect(expectsToString([1])).toBe("1"));
+  it("two consecutive → comma", () => expect(expectsToString([1, 2])).toBe("1,2"));
+  it("gap → comma-separated without range", () => expect(expectsToString([1, 3])).toBe("1,3"));
+  it("gap then consecutive → mixed", () => expect(expectsToString([1, 3, 4])).toBe("1,3,4"));
+  it("three consecutive → hyphen", () => expect(expectsToString([2, 3, 4])).toBe("2-4"));
+  it("consecutive then gap", () => expect(expectsToString([1, 2, 4])).toBe("1,2,4"));
+  it("multiple ranges", () => expect(expectsToString([1, 3, 4])).toBe("1,3,4"));
+});
 
 describe("slotsToString", () => {
   it("empty slots → empty string", () => {

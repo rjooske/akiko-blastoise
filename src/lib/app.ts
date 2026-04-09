@@ -492,6 +492,10 @@ function whensToString(whens: When[]): string {
   return res;
 }
 
+export function expectsToString(expects: number[]): string {
+  return periodsToString(expects);
+}
+
 export function slotsToString(slots: Slot[]): string {
   const termToWhens = new Map<Term, When[]>();
   for (const s of slots) {
@@ -555,6 +559,7 @@ export function generateOutput(
         name: course.name,
         credit: course.parsedCredit,
         expects: course.parsedExpects,
+        expectsString: expectsToString(course.parsedExpects),
         slots,
         slotsString: slotsToString(slots),
         availability: getAvailability(course.parsedAconds, year),
